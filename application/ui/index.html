@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Contrôle des dossiers marchands</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="barre">
+    <div class="marque">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" /></svg>
+      </span>
+      <div>
+        <strong>Contrôle</strong>
+        <small>Dossiers marchands</small>
+      </div>
+    </div>
+    <nav>
+      <button class="lien actif" data-vue="tableau">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        Tableau de bord
+      </button>
+      <button class="lien" data-vue="lancer">
+        <svg viewBox="0 0 24 24"><path d="M12 16V4M6 10l6-6 6 6"/><path d="M4 20h16"/></svg>
+        Nouveau contrôle
+      </button>
+      <button class="lien" data-vue="parametres">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+        Paramètres
+      </button>
+    </nav>
+    <div class="pied" id="etat-connexion"></div>
+  </aside>
+
+  <main>
+    <!-- ================= TABLEAU DE BORD ================= -->
+    <section class="vue" id="vue-tableau">
+      <header class="entete">
+        <div>
+          <h1>Tableau de bord</h1>
+          <p class="sous" id="tb-source"></p>
+        </div>
+        <div class="actions">
+          <select id="tb-lancement" aria-label="Lancement affiché"></select>
+          <button class="btn secondaire" id="tb-ouvrir">Ouvrir le dossier</button>
+          <button class="btn secondaire" id="tb-ranger">Ranger les PDF</button>
+          <button class="btn" id="tb-exporter">Exporter Excel</button>
+        </div>
+      </header>
+
+      <div id="tb-vide" class="vide" hidden>
+        <h2>Aucun contrôle pour l'instant</h2>
+        <p>Choisissez un dossier de PDF et lancez une première vérification.</p>
+        <button class="btn" data-aller="lancer">Nouveau contrôle</button>
+      </div>
+
+      <div id="tb-contenu" hidden>
+        <div class="kpis">
+          <div class="kpi principal">
+            <span class="kpi-lib">Dossiers contrôlés</span>
+            <span class="kpi-val" id="k-nb">0</span>
+            <span class="kpi-sous" id="k-qr"></span>
+          </div>
+          <div class="kpi">
+            <span class="kpi-lib"><i class="pastille ok" aria-hidden="true"></i>Validés</span>
+            <span class="kpi-val" id="k-valide">0</span>
+            <span class="kpi-sous" id="k-valide-p"></span>
+          </div>
+          <div class="kpi">
+            <span class="kpi-lib"><i class="pastille attention" aria-hidden="true"></i>À vérifier</span>
+            <span class="kpi-val" id="k-verif">0</span>
+            <span class="kpi-sous" id="k-verif-p"></span>
+          </div>
+          <div class="kpi">
+            <span class="kpi-lib"><i class="pastille rejet" aria-hidden="true"></i>Rejetés</span>
+            <span class="kpi-val" id="k-rejet">0</span>
+            <span class="kpi-sous" id="k-rejet-p"></span>
+          </div>
+          <div class="kpi">
+            <span class="kpi-lib">Coût Claude</span>
+            <span class="kpi-val" id="k-cout">0 $</span>
+            <span class="kpi-sous" id="k-cout-p"></span>
+          </div>
+          <div class="kpi">
+            <span class="kpi-lib">Durée</span>
+            <span class="kpi-val" id="k-duree">–</span>
+            <span class="kpi-sous" id="k-modele"></span>
+          </div>
+        </div>
+
+        <div class="carte">
+          <div class="carte-tete"><h2>Répartition des décisions</h2></div>
+          <div class="barre-empilee" id="repartition" role="img"></div>
+          <ul class="legende" id="legende"></ul>
+        </div>
+
+        <div class="grille2">
+          <div class="carte">
+            <div class="carte-tete"><h2>Motifs de rejet</h2></div>
+            <div id="motifs" class="barres"></div>
+          </div>
+          <div class="carte">
+            <div class="carte-tete"><h2>Raisons des vérifications</h2></div>
+            <div id="raisons" class="barres"></div>
+          </div>
+        </div>
+
+        <div class="carte">
+          <div class="carte-tete">
+            <h2>Dossiers</h2>
+            <input type="search" id="recherche" placeholder="Rechercher un dossier…">
+          </div>
+          <div class="filtres" id="filtres" role="tablist"></div>
+          <div class="table-cadre">
+            <table>
+              <thead>
+                <tr><th>Statut</th><th>Dossier</th><th>Pourquoi</th><th>RCCM / IFU</th><th class="num">Coût</th></tr>
+              </thead>
+              <tbody id="lignes"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= NOUVEAU CONTRÔLE ================= -->
+    <section class="vue" id="vue-lancer" hidden>
+      <header class="entete">
+        <div>
+          <h1>Nouveau contrôle</h1>
+          <p class="sous">Choisissez le dossier qui contient les PDF des marchands.</p>
+        </div>
+      </header>
+
+      <div class="carte" id="formulaire">
+        <div class="etape">
+          <span class="num-etape">1</span>
+          <div class="etape-corps">
+            <h2>Dossier des PDF</h2>
+            <div class="ligne-choix">
+              <button class="btn secondaire" id="choisir">Choisir un dossier…</button>
+              <span id="chemin" class="chemin">Aucun dossier choisi</span>
+            </div>
+          </div>
+        </div>
+        <div class="etape">
+          <span class="num-etape">2</span>
+          <div class="etape-corps">
+            <h2>Modèle</h2>
+            <div class="segment" id="modele">
+              <button data-modele="haiku" class="actif">Haiku <small>recommandé</small></button>
+              <button data-modele="sonnet">Sonnet</button>
+            </div>
+          </div>
+        </div>
+        <div class="etape">
+          <span class="num-etape">3</span>
+          <div class="etape-corps">
+            <h2>Estimation</h2>
+            <p id="estimation" class="sous">Choisissez un dossier pour voir l'estimation.</p>
+          </div>
+        </div>
+        <div class="bas-formulaire">
+          <p id="alerte-lancer" class="alerte" hidden></p>
+          <button class="btn grand" id="lancer" disabled>Lancer la vérification</button>
+        </div>
+      </div>
+
+      <div class="carte" id="suivi" hidden>
+        <div class="carte-tete">
+          <h2 id="suivi-titre">Vérification en cours</h2>
+          <button class="btn secondaire" id="arreter">Arrêter</button>
+        </div>
+        <div class="progression"><div id="progression-barre"></div></div>
+        <div class="suivi-chiffres">
+          <span><strong id="s-fait">0</strong> / <span id="s-total">0</span> dossiers</span>
+          <span>Écoulé <strong id="s-ecoule">0 min</strong></span>
+          <span id="s-reste"></span>
+          <span>Coût <strong id="s-cout">0,00 $</strong></span>
+        </div>
+        <div class="suivi-compte" id="s-compte"></div>
+        <ul class="derniers" id="s-derniers"></ul>
+        <p id="s-erreur" class="alerte" hidden></p>
+        <p id="s-tri" class="sous" hidden></p>
+        <div class="actions">
+          <button class="btn" id="voir-resultats" hidden>Voir les résultats</button>
+          <button class="btn secondaire" id="ouvrir-tri" hidden>Ouvrir les PDF rangés</button>
+        </div>
+      </div>
+
+      <div class="carte" id="interrompus" hidden>
+        <div class="carte-tete"><h2>Contrôles interrompus</h2></div>
+        <ul class="liste-interrompus" id="liste-interrompus"></ul>
+      </div>
+    </section>
+
+    <!-- ================= PARAMÈTRES ================= -->
+    <section class="vue" id="vue-parametres" hidden>
+      <header class="entete">
+        <div>
+          <h1>Paramètres</h1>
+          <p class="sous">Réglages enregistrés sur ce PC uniquement.</p>
+        </div>
+      </header>
+
+      <div class="carte">
+        <h2>Clé API Claude</h2>
+        <p class="sous" id="cle-etat"></p>
+        <div class="ligne-champ">
+          <input type="password" id="cle" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+          <button class="btn" id="enregistrer-cle">Enregistrer</button>
+          <button class="btn secondaire" id="tester-cle">Tester</button>
+          <button class="btn lien-texte" id="oublier-cle">Supprimer</button>
+        </div>
+        <p id="cle-message" class="message" hidden></p>
+        <p class="aide">La clé est chiffrée avec votre compte Windows et n'est transmise qu'à Claude.</p>
+      </div>
+
+      <div class="carte">
+        <h2>Modèle par défaut</h2>
+        <div class="segment" id="modele-defaut">
+          <button data-modele="haiku">Haiku <small>~0,017 $ / dossier</small></button>
+          <button data-modele="sonnet">Sonnet <small>~0,045 $ / dossier</small></button>
+        </div>
+        <p class="aide">Sur 49 dossiers vérifiés, les deux modèles donnent la même qualité ; Haiku coûte près de 3 fois moins.</p>
+      </div>
+
+      <div class="carte">
+        <h2>Moteur de contrôle</h2>
+        <div class="ligne-champ">
+          <input type="text" id="moteur" spellcheck="false">
+          <button class="btn secondaire" id="choisir-moteur">Parcourir…</button>
+          <button class="btn" id="enregistrer-moteur">Enregistrer</button>
+        </div>
+        <p class="aide" id="moteur-etat"></p>
+      </div>
+    </section>
+  </main>
+
+  <!-- détail d'un dossier -->
+  <div class="voile" id="voile" hidden></div>
+  <aside class="tiroir" id="tiroir" aria-hidden="true">
+    <header>
+      <div>
+        <span id="d-statut"></span>
+        <h2 id="d-nom"></h2>
+      </div>
+      <button class="fermer" id="fermer" aria-label="Fermer">×</button>
+    </header>
+    <div class="tiroir-corps" id="d-corps"></div>
+    <footer>
+      <button class="btn" id="d-pdf">Ouvrir le PDF</button>
+    </footer>
+  </aside>
+
+  <div class="bulle" id="bulle" hidden></div>
+  <div class="toast" id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

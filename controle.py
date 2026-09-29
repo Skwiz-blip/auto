@@ -46,8 +46,10 @@ MODELES = {
 }
 MODEL, PRICE_IN, PRICE_OUT = MODELES["haiku"]
 EFFORT = None  # niveau de réflexion (non accepté par Haiku 4.5)
-# au-delà de cette marge, une date d'expiration mal lue d'un chiffre ne change rien
-MARGE_JOURS = 180
+# lectures de la date d'expiration en désaccord : si toutes sont postérieures à cette marge
+# (en jours), la pièce est valide quelle que soit la bonne lecture (règle KIK : valide tant
+# que la date n'est pas passée)
+MARGE_JOURS = 0
 
 def _consignes(sans: tuple[str, ...]) -> list[dict]:
     """Instructions système avec un modèle JSON réduit : les sections déjà fournies par le
@@ -224,11 +226,11 @@ def fusionner(base: dict, claude: dict, ocr: dict, date_gros_plan: str = "") -> 
     aujourd_hui = date.today()
     if len(retenue) >= 2:
         data["piece_identite"]["date_expiration"] = retenue[0][1]
-    elif dates and all((d - aujourd_hui).days > MARGE_JOURS for d in dates):
+    elif dates and all((d - aujourd_hui).days >= MARGE_JOURS for d in dates):
         # toutes les lectures donnent une carte valide longtemps encore : un chiffre de
         # désaccord ne change pas la décision ; on retient la plus proche par prudence
         data["piece_identite"]["date_expiration"] = min(dates).isoformat()
-    elif len(dates) >= 2 and all(d <= aujourd_hui for d in dates):
+    elif len(dates) >= 2 and all(d < aujourd_hui for d in dates):
         # toutes les lectures donnent une carte déjà expirée : on retient la plus favorable
         data["piece_identite"]["date_expiration"] = max(dates).isoformat()
     else:

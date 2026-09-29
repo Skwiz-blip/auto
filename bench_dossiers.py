@@ -331,10 +331,9 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
         exp = _date(pid["date_expiration"])
         if exp is None:
             vigilance.append("Date d'expiration de la pièce d'identité illisible")
-        elif exp <= date_traitement:
+        elif exp < date_traitement:
+            # règle KIK : tant que la date n'est pas passée, la pièce est valide
             rejet(M_ID_EXPIRE, f"{pid['type'] or 'pièce'} expirée le {exp:%d/%m/%Y}")
-        elif (exp - date_traitement).days <= 30:
-            vigilance.append(f"Pièce d'identité expire bientôt ({exp:%d/%m/%Y})")
         if not pid["photo_lisible"]:
             if photo_bloquante:
                 rejet(M_PHOTO, "photo absente ou visage non identifiable")
