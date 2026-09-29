@@ -1,0 +1,11 @@
+# Moteur de contrôle
+anthropic>=0.105
+pymupdf>=1.28
+pytesseract>=0.3.13
+opencv-python-headless>=4.10
+numpy>=2.0
+pillow>=11.0
+pyzbar>=0.1.9
+# Application de bureau
+pywebview>=6.0
+openpyxl>=3.1
