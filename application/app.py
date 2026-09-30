@@ -253,7 +253,11 @@ class Api:
             ligne = ligne.rstrip()
             with self._verrou:
                 e = self._etat
-                if ligne.startswith("DOSSIER_SORTIE "):
+                if ligne.startswith("CREDIT_EPUISE "):
+                    e["erreur"] = ("Crédit Claude épuisé. Rechargez le compte sur "
+                                   "console.anthropic.com, puis cliquez sur « Reprendre » : "
+                                   "les dossiers déjà traités ne seront pas refacturés.")
+                elif ligne.startswith("DOSSIER_SORTIE "):
                     e["sortie"] = ligne.split(" ", 1)[1]
                     (Path(e["sortie"]) / "source.json").write_text(
                         json.dumps({"dossier": dossier, "modele": modele}, ensure_ascii=False),
@@ -275,7 +279,7 @@ class Api:
         with self._verrou:
             e = self._etat
             e["en_cours"], e["fin"] = False, time.time()
-            if code == 0 and e["sortie"]:
+            if code == 0 and e["sortie"] and not e["erreur"]:
                 # contrôle terminé : les PDF sont rangés par décision, sans intervention
                 try:
                     e["tri"] = self.ranger(e["sortie"], ouvrir=False)["dossier"]
@@ -323,7 +327,9 @@ class Api:
                 date_txt = sortie.name
             total = len(list(Path(src["dossier"]).glob("*.pdf"))) if Path(src["dossier"]).is_dir() else 0
             liste.append({"sortie": str(sortie), "date": date_txt, "nb": len(journaux),
-                          "termine": (sortie / "synthese.txt").exists(),
+                          # des dossiers en erreur (crédit épuisé, réseau…) se reprennent
+                          "termine": (sortie / "synthese.txt").exists()
+                                     and not any(j.get("erreur") for j in journaux),
                           "total_source": total, "dossier": src["dossier"],
                           "modele": src.get("modele", ""),
                           "en_cours": self._etat["en_cours"] and self._etat["sortie"] == str(sortie)})
@@ -443,6 +449,26 @@ class Api:
         if ouvrir and racine.exists():
             os.startfile(racine)
         return {"ok": True, "dossier": str(racine), "compte": compte, "manquants": manquants}
+
+    def sharepoint(self, sortie: str) -> dict:
+        """Modèle SharePoint rempli avec les dossiers validés du lancement, puis ouvert."""
+        sys.path.insert(0, str(moteur()))
+        try:
+            import sharepoint
+            fichier = sharepoint.remplir_depuis(Path(sortie))
+        except PermissionError:
+            return {"ok": False, "message": "Fermez le fichier SharePoint dans Excel puis réessayez."}
+        except (ImportError, OSError, ValueError) as e:
+            return {"ok": False, "message": f"Fichier SharePoint impossible : {e}"}
+        if not fichier:
+            fichier = Path(moteur()) / "MODELE SHAREPOINT VC.xlsx"
+            if fichier.exists():
+                os.startfile(fichier)
+            return {"ok": False, "message": "Rien de nouveau : les dossiers validés de ce "
+                                            "contrôle sont déjà dans le fichier SharePoint."}
+        os.startfile(fichier)
+        valides = sum(1 for j in _journaux(Path(sortie)) if _statut(j) == "VALIDÉ")
+        return {"ok": True, "nb": valides}
 
     def exporter(self, sortie: str) -> dict:
         from openpyxl import Workbook

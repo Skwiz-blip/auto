@@ -34,8 +34,13 @@ pytesseract.pytesseract.tesseract_cmd = os.environ.get(
 LANGUES = "fra+eng"
 
 # Marqueurs cherchés dans l'en-tête des pages (texte normalisé sans accents)
+# l'ordre compte : le contrat est testé en premier, car ses pages citent aussi « CELTIIS »
 MARQUEURS = {
-    "fiche": ["FICHE DE CREATION", "KIK EXPERIENCE", "CELTIIS", "CELTIS"],
+    # (pas « ANNEXE » seul : le RCCM a une rubrique « ANNEXES »)
+    "contrat": ["CONTRAT DE PAIEMENT", "CELTIIS CASH |", "ANNEXE 1", "ANNEXE 2", "ANNEXE 3",
+                "ANNEXE I", "OBLIGATIONS DU MARCHAND", "OBLIGATIONS DE LA SBIN"],
+    # (pas « CELTIIS » seul : toutes les pages du contrat le citent)
+    "fiche": ["FICHE DE CREATION", "KIK EXPERIENCE", "CREATION MARCHAND"],
     "rccm": ["EXTRAIT DU REGISTRE", "REGISTRE DU COMMERCE", "GREFFE DU TRIBUNAL",
              "TRIBUNAL DE COMMERCE"],
     "ifu": ["ATTESTATION D'IMMATRICULATION", "ATTESTATION D IMMATRICULATION",
@@ -44,7 +49,6 @@ MARQUEURS = {
     "piece_identite": ["CERTIFICAT D'IDENTIFICATION PERSONNELLE",
                        "CERTIFICAT D IDENTIFICATION PERSONNELLE",
                        "CARTE NATIONALE D'IDENTITE", "PASSEPORT"],
-    "contrat": ["CONTRAT DE PAIEMENT", "CELTIIS CASH |", "ANNEXE"],
 }
 
 RE_RCCM = re.compile(r"RB\s*/?\s*[A-Z]{2,4}\s*/?\s*\d{2}\s*[A-Z]\s*\d{3,6}")
@@ -58,10 +62,10 @@ MOTS_ENTETE = ("MINISTERE", "ECONOMIE", "FINANCE", "REPUBLIQUE", "DIRECTION", "G
 CHAMPS_NOM = {
     # \bNOM\b : ne pas capter le « NOM » de « DENOMINATION » ; « PATRONYMIQUE » est souvent
     # mal lu par l'OCR (« FATRONYMIQUE ») d'où la terminaison seule
-    "nom": r"\bNOM\b\s*(?:[A-Z]{0,4}RONYMIQUE)?\s*[:.]?\s*([A-ZÉÈÀÙÇ' -]{2,40})",
+    "nom": r"\bNOM\b\s*(?:[A-Z]{0,4}RON\s?YMIQUE)?\s*[:.]?\s*([A-ZÉÈÀÙÇ' -]{2,40})",
     "prenoms": r"\bPRENOMS?\b\s*(?:\(S\))?\s*[:.]?\s*([A-ZÉÈÀÙÇ' -]{2,60})",
     "enseigne": r"ENSEIGNE\s*(?:COMMERCIALE)?\s*[:.]?\s*([A-Z0-9ÉÈÀÙÇ'& -]{3,60})",
-    "nom_commercial": r"NOM\s+COMMERCIAL\s*[:.]?\s*([A-Z0-9ÉÈÀÙÇ'& -]{3,60})",
+    "nom_commercial": r"NOM\s+COMMERC\w*\s*[:.]?\s*([A-Z0-9ÉÈÀÙÇ'& -]{3,60})",
 }
 
 
@@ -106,14 +110,21 @@ def identifier_pages(doc) -> tuple[dict, dict]:
         trouve = _type_depuis_texte(texte)
         angles[i] = 0
         if trouve == "inconnu":
-            # page peut-être pivotée (scan de travers) : on redresse et on réessaie
+            # la pièce n'occupe parfois qu'une partie de la page (CIP au milieu) : page entière
             pleine = _image(page, 1400)
+            trouve = _type_depuis_texte(_sans_accents(pytesseract.image_to_string(
+                pleine, lang=LANGUES, config="--psm 6")))
+        if trouve == "inconnu":
+            # page peut-être pivotée (scan de travers) : on redresse et on réessaie. L'angle
+            # n'est retenu que si la page redressée est reconnue : la détection d'orientation
+            # se trompe souvent et retournait à l'envers des pages droites
             rot = _angle(pleine)
             if rot:
                 texte2 = _sans_accents(pytesseract.image_to_string(
                     pleine.rotate(-rot, expand=True), lang=LANGUES, config="--psm 6"))
-                trouve = _type_depuis_texte(texte2)
-                angles[i] = rot
+                trouve_pivote = _type_depuis_texte(texte2)
+                if trouve_pivote not in ("inconnu", "contrat"):
+                    trouve, angles[i] = trouve_pivote, rot
         if trouve == "contrat" and contrat_commence is None:
             contrat_commence = i
         types[i] = trouve
@@ -171,8 +182,9 @@ def extraire(texte: str) -> dict:
         if m := re.search(motif, up):
             valeur = " ".join(m.group(1).split())
             # l'OCR rend un texte à plat : on coupe dès l'étiquette suivante
+            # (« NOM » seul et « COMMERC… » mal lu : l'étiquette NOM COMMERCIAL qui suit l'enseigne)
             valeur = re.split(r"\b(?:SIGLE|NEANT|NEAN|NATIONALITE|ADRESSE|PRENOMS?|ENSEIGNE"
-                              r"|ACTIVITE|DOMICILE|DATE|COMMERCIAL|REGISTRE)\b",
+                              r"|ACTIVITE|DOMICILE|DATE|COMMERC\w*|REGISTRE|NOM)\b",
                               valeur)[0].strip(" -:.")
             # écarte les en-têtes officiels captés par erreur (MINISTERE…, REPUBLIQUE…)
             if len(valeur) > 1 and not any(mot in valeur for mot in MOTS_ENTETE):

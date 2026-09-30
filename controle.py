@@ -5,6 +5,7 @@ import csv
 import io
 import json
 import random
+import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
 from datetime import date, datetime
@@ -14,9 +15,10 @@ import anthropic
 import fitz
 from PIL import Image
 
-from bench_dossiers import (ROOT, SCHEMA, SYSTEM, _norm, _rccm, _template, apply_rules,
+from bench_dossiers import (DATE_CONTRADICTOIRE, ROOT, SCHEMA, SYSTEM, _date, _norm, _rccm, _template, apply_rules,
                             conform, load_api_key, marquer_doublons, parse_json)
 from ocr_local import lire_dossier
+import sharepoint
 from qr_officiel import pieces_officielles
 
 
@@ -46,6 +48,7 @@ MODELES = {
 }
 MODEL, PRICE_IN, PRICE_OUT = MODELES["haiku"]
 EFFORT = None  # niveau de réflexion (non accepté par Haiku 4.5)
+CREDIT_EPUISE = threading.Event()  # levé au premier refus pour crédit insuffisant
 # lectures de la date d'expiration en désaccord : si toutes sont postérieures à cette marge
 # (en jours), la pièce est valide quelle que soit la bonne lecture (règle KIK : valide tant
 # que la date n'est pas passée)
@@ -79,9 +82,13 @@ CONSIGNE = """Tu reçois seulement les pages qu'une lecture automatique n'a pas 
 la fiche de création (manuscrite), la pièce d'identité, et éventuellement des pages non
 identifiées. Chaque image est précédée de son numéro de page dans le dossier.
 
-Déjà obtenu de façon fiable (QR officiel de l'État et lecture locale) — reprends ces
-valeurs telles quelles, ne les corrige pas :
-{deja_lu}
+Documents officiels récupérés auprès de l'État (QR code) : ces valeurs font foi, reprends-les
+telles quelles :
+{officiel}
+
+Lecture automatique (OCR) des autres pages, souvent fautive (étiquettes collées au nom,
+lettres mal lues) : ne la recopie pas, lis toi-même ces champs sur l'image et corrige-les :
+{indicatif}
 
 Pages fournies :
 {attendu}
@@ -89,10 +96,10 @@ Pages fournies :
 Consignes particulières :
 - Sur la pièce d'identité, lis la date d'expiration chiffre par chiffre. Si tu n'es pas
   certain, mets "" et signale "piece_identite.date_expiration" dans champs_incertains.
-- Sur la fiche manuscrite, tout mot que tu ne déchiffres pas avec certitude doit rester
-  vide et figurer dans champs_incertains. N'invente jamais un nom.
-- champs_incertains est important : il déclenche un contrôle humain, ce qui est toujours
-  préférable à une valeur inventée."""
+- Sur la fiche manuscrite, recopie ce que tu lis, même partiellement, avec « ? » pour chaque
+  caractère illisible ; laisse "" seulement si la case est vide. N'invente jamais un nom.
+- Sur la pièce d'identité et le RCCM, signale dans champs_incertains tout nom ou chiffre dont
+  tu n'es pas sûr : mieux vaut un contrôle humain qu'une valeur inventée."""
 
 
 def _preparer(pdf_str: str) -> dict:
@@ -129,6 +136,13 @@ def _preparer(pdf_str: str) -> dict:
                 if int(p) <= 8 and t != "contrat" and int(p) not in pages_officielles]
         ocr["pages_a_envoyer"] = sorted(set(ocr["pages_a_envoyer"]) | set(tete))
     return ocr
+
+
+def sections_officielles(ocr: dict) -> set[str]:
+    """Sections du JSON remplies par un document officiel récupéré via QR (valeurs sûres)."""
+    officiel = ocr.get("officiel", {})
+    return ({"rccm"} if "rccm" in officiel else set()) | (
+        {"ifu"} if "ifu" in officiel or "apiex" in officiel else set())
 
 
 def socle(ocr: dict) -> tuple[dict, list[str]]:
@@ -190,14 +204,21 @@ def socle(ocr: dict) -> tuple[dict, list[str]]:
 
 
 def fusionner(base: dict, claude: dict, ocr: dict, date_gros_plan: str = "") -> tuple[dict, list[str]]:
-    """Le socle (QR/OCR) l'emporte ; Claude comble les vides. Date de CIP : double lecture."""
+    """Le QR officiel l'emporte toujours ; ailleurs la lecture de Claude remplace celle de l'OCR
+    pour les noms et l'enseigne (l'OCR y colle des étiquettes). Date de CIP : double lecture."""
     doutes = []
     data = json.loads(json.dumps(base))
+    sures = sections_officielles(ocr)
+    textes_claude = {"nom", "prenoms", "enseigne", "nom_commercial", "nom_etablissement"}
     for section in ("fiche", "rccm", "ifu", "piece_identite", "pieces", "analyse"):
-        for champ, valeur in claude[section].items():
+        for champ, valeur in claude.get(section, {}).items():
+            if champ not in data[section]:
+                continue
             actuel = data[section][champ]
             if isinstance(valeur, str):
-                if valeur and not actuel:
+                remplacer = (section in ("rccm", "ifu") and section not in sures
+                             and champ in textes_claude)
+                if valeur and (not actuel or remplacer):
                     data[section][champ] = valeur
             elif isinstance(valeur, list):
                 data[section][champ] = list(dict.fromkeys(actuel + valeur)) if actuel else valeur
@@ -212,17 +233,14 @@ def fusionner(base: dict, claude: dict, ocr: dict, date_gros_plan: str = "") -> 
     lectures = {"OCR local": ocr["champs"].get("piece_identite", {}).get("date_expiration", ""),
                 "Claude (page entière)": claude["piece_identite"]["date_expiration"],
                 "Claude (gros plan)": date_gros_plan}
+    # toutes ramenées au format AAAA-MM-JJ avant de comparer (« 23/05/2031 » = « 2031-05-23 »)
+    lectures = {s: (_date(v).isoformat() if _date(v) else "") for s, v in lectures.items()}
     votes = {}
     for source, valeur in lectures.items():
         if valeur:
-            votes.setdefault(_norm(valeur), []).append((source, valeur))
+            votes.setdefault(valeur, []).append((source, valeur))
     retenue = max(votes.values(), key=len, default=[])
-    dates = []
-    for valeur in lectures.values():
-        try:
-            dates.append(date.fromisoformat(valeur))
-        except (TypeError, ValueError):
-            pass
+    dates = [date.fromisoformat(v) for v in lectures.values() if v]
     aujourd_hui = date.today()
     if len(retenue) >= 2:
         data["piece_identite"]["date_expiration"] = retenue[0][1]
@@ -230,13 +248,16 @@ def fusionner(base: dict, claude: dict, ocr: dict, date_gros_plan: str = "") -> 
         # toutes les lectures donnent une carte valide longtemps encore : un chiffre de
         # désaccord ne change pas la décision ; on retient la plus proche par prudence
         data["piece_identite"]["date_expiration"] = min(dates).isoformat()
-    elif len(dates) >= 2 and all(d < aujourd_hui for d in dates):
+    elif dates and all(d < aujourd_hui for d in dates):
         # toutes les lectures donnent une carte déjà expirée : on retient la plus favorable
         data["piece_identite"]["date_expiration"] = max(dates).isoformat()
     else:
+        # aucune lecture (rejet « Pièce floue ») ou lectures contradictoires, les unes valides,
+        # les autres expirées (contrôle humain) : apply_rules tranche selon DATE_CONTRADICTOIRE
         data["piece_identite"]["date_expiration"] = ""
-        detail = ", ".join(f"{s} « {v} »" for s, v in lectures.items() if v) or "aucune lecture"
-        doutes.append(f"date d'expiration de la pièce d'identité non confirmée ({detail})")
+        if dates:
+            detail = ", ".join(f"{s} « {v} »" for s, v in lectures.items() if v)
+            doutes.append(f"{DATE_CONTRADICTOIRE} ({detail})")
     if data["piece_identite"]["date_expiration"]:
         # date établie par nos lectures croisées : le doute propre au modèle n'a plus d'objet
         data["analyse"]["champs_incertains"] = [
@@ -280,9 +301,14 @@ def gros_plan_date(pdf: Path, page_num: int, angle: int, quality: int) -> bytes:
     return tampon.getvalue()
 
 
-async def relire_date(client, pdf: Path, ocr: dict, args) -> tuple[str, dict]:
-    """Seconde lecture, indépendante, de la date d'expiration (quelques centaines de tokens)."""
+async def relire_date(client, pdf: Path, ocr: dict, args,
+                      pages_claude: list | None = None) -> tuple[str, dict]:
+    """Seconde lecture, indépendante, de la date d'expiration (quelques centaines de tokens).
+    La page de la CIP vient de la lecture locale, à défaut de celle indiquée par Claude."""
     pages = [int(p) for p, t in ocr["pages"].items() if t == "piece_identite"]
+    if not pages:
+        pages = [int(p) for p in (pages_claude or []) if str(p).isdigit()
+                 and 1 <= int(p) <= ocr["nb_pages"]]
     if not pages:
         return "", {}
     angle = ocr.get("rotations", {}).get(str(pages[0]), 0)
@@ -317,6 +343,8 @@ async def traiter(client, pdf: Path, ocr: dict, args, sem) -> tuple[dict, dict]:
     async with sem:
         t0 = time.perf_counter()
         try:
+            if CREDIT_EPUISE.is_set():
+                raise RuntimeError("Crédit Claude épuisé : dossier non traité, à reprendre")
             pages = ocr["pages_a_envoyer"]
             data = base
 
@@ -335,9 +363,14 @@ async def traiter(client, pdf: Path, ocr: dict, args, sem) -> tuple[dict, dict]:
                 attendu = "\n".join(
                     f"- page {n} : {ocr['pages'].get(str(n), ocr['pages'].get(n, 'inconnu'))}"
                     for n in pages_lues)
-                deja = {k: v for k, v in base.items() if k in ("rccm", "ifu")}
+                sures = sections_officielles(ocr)
+                officiel = {k: base[k] for k in ("rccm", "ifu") if k in sures}
+                indicatif = {k: v for k, v in ocr["champs"].items()
+                             if k in ("rccm", "ifu", "apiex") and k not in sures}
                 contenu.append({"type": "text", "text": CONSIGNE.format(
-                    deja_lu=json.dumps(deja, ensure_ascii=False), attendu=attendu)})
+                    officiel=json.dumps(officiel, ensure_ascii=False) if officiel else "(aucun)",
+                    indicatif=json.dumps(indicatif, ensure_ascii=False) if indicatif else "(aucune)",
+                    attendu=attendu)})
                 off = ocr.get("officiel", {})
                 a_rccm, a_ifu = "rccm" in off, ("ifu" in off or "apiex" in off)
                 variante = ("sans_rccm_ifu" if a_rccm and a_ifu else "sans_rccm" if a_rccm
@@ -377,7 +410,8 @@ async def traiter(client, pdf: Path, ocr: dict, args, sem) -> tuple[dict, dict]:
                 row["t_api_s"] = round(time.perf_counter() - t0, 2)
                 row["cout_usd"] = round(row["tokens_in"] * PRICE_IN
                                         + row["tokens_out"] * PRICE_OUT, 5)
-                date_gros_plan, usage_date = await relire_date(client, pdf, ocr, args)
+                date_gros_plan, usage_date = await relire_date(
+                    client, pdf, ocr, args, claude["pieces"]["piece_identite"].get("pages"))
                 if usage_date:
                     row["tokens_in"] += usage_date["in"]
                     row["tokens_out"] += usage_date["out"]
@@ -391,8 +425,7 @@ async def traiter(client, pdf: Path, ocr: dict, args, sem) -> tuple[dict, dict]:
             sures = {p for p in ("rccm", "ifu") if p in ocr.get("officiel", {})}
             if "apiex" in ocr.get("officiel", {}):
                 sures.add("ifu")
-            decision = apply_rules(data, date.today(), nom, sources_officielles=sures,
-                                   photo_bloquante=False)
+            decision = apply_rules(data, date.today(), nom, sources_officielles=sures)
             row.update(statut=decision["statut"],
                        rccm=data["rccm"]["numero"] or data["ifu"]["rccm"],
                        motifs_rejet=" | ".join(decision["motifs_rejet"]),
@@ -402,6 +435,12 @@ async def traiter(client, pdf: Path, ocr: dict, args, sem) -> tuple[dict, dict]:
         except Exception as e:  # un dossier en erreur ne bloque pas le lot
             row["erreur"] = f"{type(e).__name__}: {e}"
             journal["erreur"] = row["erreur"]
+            if "credit balance is too low" in str(e) and not CREDIT_EPUISE.is_set():
+                # inutile d'insister : les dossiers suivants s'arrêtent aussitôt, sans frais,
+                # et seront traités à la reprise (les erreurs sont retentées)
+                CREDIT_EPUISE.set()
+                print("CREDIT_EPUISE Crédit Claude épuisé : rechargez le compte puis reprenez "
+                      "le contrôle.", flush=True)
     print(f"  {row['statut']:<11} {row['pages_envoyees']:>2}/{row['pages']:>2}p -> Claude | "
           f"QR: {row['qr_officiel'] or 'aucun':<10} {row['cout_usd']:.5f}$  {nom}"
           + (f"  !! {row['erreur'][:200]}" if row["erreur"] else ""), flush=True)
@@ -525,6 +564,12 @@ async def main():
     if ok:
         lignes.append("Échantillon de contrôle (5 %) : " + ", ".join(
             r["dossier"] for r in random.sample(ok, max(1, round(len(ok) * 0.05)))))
+    try:
+        fichier_sp = sharepoint.remplir(out, journaux)
+        if fichier_sp:
+            lignes.append(f"Fichier SharePoint (dossiers validés) : {fichier_sp.name}")
+    except (OSError, ValueError) as e:  # modèle ouvert dans Excel, absent…
+        lignes.append(f"Fichier SharePoint non créé : {e}")
     resume = "\n".join(lignes)
     (out / "synthese.txt").write_text(resume, encoding="utf-8")
     print("\n" + resume)

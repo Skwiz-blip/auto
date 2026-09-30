@@ -80,11 +80,11 @@ async function chargerLancements() {
   if (!etat.lancements.length) {
     $("tb-vide").hidden = false;
     $("tb-contenu").hidden = true;
-    choix.hidden = $("tb-ouvrir").hidden = $("tb-exporter").hidden = $("tb-ranger").hidden = true;
+    choix.hidden = $("tb-ouvrir").hidden = $("tb-exporter").hidden = $("tb-ranger").hidden = $("tb-sharepoint").hidden = true;
     $("tb-source").textContent = "";
     return;
   }
-  choix.hidden = $("tb-ouvrir").hidden = $("tb-exporter").hidden = $("tb-ranger").hidden = false;
+  choix.hidden = $("tb-ouvrir").hidden = $("tb-exporter").hidden = $("tb-ranger").hidden = $("tb-sharepoint").hidden = false;
   if (!etat.lancements.some((l) => l.sortie === etat.sortie)) etat.sortie = etat.lancements[0].sortie;
   choix.innerHTML = etat.lancements.map((l) => {
     const suffixe = l.en_cours ? " · en cours" : l.termine ? "" : " · interrompu";
@@ -101,6 +101,10 @@ $("tb-ranger").addEventListener("click", async () => {
   const c = r.compte;
   toast(`Rangés : ${c["VALIDÉ"]} validés, ${c["À VÉRIFIER"]} à vérifier, ${c["REJETÉ"]} rejetés`
     + (r.manquants.length ? ` · ${r.manquants.length} PDF introuvables` : ""));
+});
+$("tb-sharepoint").addEventListener("click", async () => {
+  const r = await api().sharepoint(etat.sortie);
+  toast(r.ok ? `${r.nb} dossier(s) validé(s) ajouté(s) au fichier SharePoint.` : r.message);
 });
 $("tb-exporter").addEventListener("click", async () => {
   const r = await api().exporter(etat.sortie);
