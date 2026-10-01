@@ -1,5 +1,5 @@
 @echo off
-rem Prépare une nouvelle machine : bibliothèques Python et vérification de Tesseract.
+rem Prépare une nouvelle machine : bibliothèques Python (OCR PP-OCR et lecteur de QR compris).
 chcp 65001 >nul
 cd /d "%~dp0"
 
@@ -20,12 +20,12 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if exist "C:\Program Files\Tesseract-OCR\tesseract.exe" (
-  echo [OK] Tesseract OCR est installe.
+echo Preparation de la lecture des documents (PP-OCR, environ 30 Mo au premier lancement)...
+python -c "from rapidocr import RapidOCR; RapidOCR()" >nul 2>&1
+if errorlevel 1 (
+  echo [X] La lecture des documents ne demarre pas : verifiez la connexion Internet.
 ) else (
-  echo [X] Tesseract OCR manque. Installez-le depuis
-  echo     https://github.com/UB-Mannheim/tesseract/wiki
-  echo     dans le dossier propose par defaut : C:\Program Files\Tesseract-OCR
+  echo [OK] Lecture des documents prete.
 )
 
 python -c "from pyzbar import pyzbar" >nul 2>&1

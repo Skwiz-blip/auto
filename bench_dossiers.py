@@ -68,7 +68,7 @@ SCHEMA = _obj({
         "numero", "nom", "prenoms", "nationalite", "date_naissance",
         "lieu_naissance", "enseigne", "nom_commercial", "adresse",
         "activite", "date_debut_exploitation", "date_delivrance",
-        "telephone"]} | {"cachet_greffe": B}),
+        "telephone", "document_substitut"]} | {"cachet_greffe": B}),
     "ifu": _obj({k: S for k in [
         "numero", "nom", "prenoms", "nom_etablissement", "categorie",
         "adresse", "rccm", "regime_fiscal", "centre_impots",
@@ -103,8 +103,13 @@ Règles de saisie :
 - rccm.nom / ifu.nom / piece_identite.nom : nom de famille (patronymique) ; "prenoms" : tous
   les prénoms, dans l'ordre écrit.
 - ifu.nom / ifu.prenoms : nom et prénoms de la personne physique titulaire tels qu'imprimés
-  sur l'attestation IFU (souvent le nom commercial est dans nom_etablissement ; si le nom de
-  la personne n'apparaît pas sur l'IFU, laisse "").
+  sur l'attestation IFU (champs « Nom » / « Prénom(s) », ou « Contribuable » / « Nom prénom /
+  Dénomination » qui contient nom ET prénoms : répartis-les, sans répéter un mot). Le nom
+  commercial va dans nom_etablissement ; si l'IFU est celui d'une société (pas de nom de
+  personne), laisse "".
+- piece_identite.nom / prenoms : uniquement le titulaire (lignes « Nom » et « Prénom(s) »),
+  JAMAIS les lignes « Père » ou « Mère » de la rubrique Filiation. La carte est souvent
+  scannée de travers : repère bien les libellés.
 - fiche (FICHE DE CREATION MARCHAND - CELTIIS CASH, manuscrite) : nom_structure = « Nom de la
   structure » ; secteur = « Secteur d'activité » (s'il est peu lisible, donne l'activité la
   plus probable, ex. « Commerce général », « Transfert d'argent ») ; representant = « Nom du
@@ -117,7 +122,9 @@ Règles de saisie :
   vraiment vide sur le formulaire.
 - rccm.telephone / piece_identite.telephone : numéro imprimé sur le RCCM (« Tel : ») et sur la
   CIP (« Numéro de téléphone »), tel qu'écrit.
-- Dates au format AAAA-MM-JJ quand elles sont lisibles, sinon "".
+- Dates au format AAAA-MM-JJ quand elles sont lisibles, sinon "". Exception :
+  piece_identite.date_expiration se recopie TELLE QU'IMPRIMÉE, au format JJ/MM/AAAA (ex.
+  « Expire le : 08/11/2026 » -> "08/11/2026") : le premier nombre est le jour.
 - Coordonnées GPS : recopie les nombres tels qu'écrits (point décimal).
 - Booléens de signature / cachet : true seulement si l'élément est visible sur le scan.
 - piece_identite.photo_lisible : true seulement si la photo est présente et que le visage est
@@ -127,6 +134,11 @@ Règles de saisie :
   mets alors pieces.ifu.presente = false, indique ce document dans ifu.document_substitut
   (ex : "Carte professionnelle APIEx") et remplis les champs ifu (numero, nom, prenoms, rccm…)
   à partir de ce document. S'il n'y a ni attestation ni substitut, document_substitut = "".
+  Même principe pour une attestation CNSS (« Numéro d'immatriculation employeur ») : son
+  matricule commence par le n° IFU (13 premiers chiffres).
+- rccm : seulement un extrait du registre du commerce. Une association / ONG fournit un
+  récépissé de déclaration : mets pieces.rccm.presente = false et rccm.document_substitut =
+  "Récépissé de déclaration d'ONG".
 - "lisible" = false si la pièce est floue, coupée ou trop sombre au point de gêner la lecture
   d'un champ important ; précise le problème dans "remarque".
 - Dans les numéros RCCM, le code du greffe désigne la ville (ex : ABC = Abomey-Calavi,
@@ -235,6 +247,7 @@ def compare_names(ref: list[str], other: list[str]) -> str:
     L'ordre nom/prénoms est ignoré. Chaque mot de la liste la plus courte doit
     correspondre à un mot distinct de l'autre liste (similarité >= 0,8).
     """
+    ref, other = list(dict.fromkeys(ref)), list(dict.fromkeys(other))  # mots répétés
     if sorted(ref) == sorted(other):
         return "identique"
     short, long_ = sorted([ref, other], key=len)
@@ -243,6 +256,8 @@ def compare_names(ref: list[str], other: list[str]) -> str:
     def score(word, w):  # une initiale ("B.") correspond à un prénom qui commence par B
         if len(word) == 1 or len(w) == 1:
             return 1.0 if word[0] == w[0] else 0.0
+        if len(word) == len(w) and sum(a != b for a, b in zip(word, w)) == 1:
+            return 0.9  # une seule lettre d'écart (« ROCK » / « ROCH ») : proche
         return SequenceMatcher(None, word, w).ratio()
 
     for word in short:
@@ -286,7 +301,22 @@ AJOUTS_FICHIER = [
     re.compile(r"[\s._-]*_\d{4,6}$"),
     re.compile(r"\s*,.*$"),
     re.compile(r"\s+\d{1,2}$"),
+    re.compile(r"(?<=[A-Za-zÀ-ÿ])\d$"),          # numéro collé : « SAGJ GSM PRO1 »
+    re.compile(r"\s+PRIME(\s+\d+)?$", re.IGNORECASE),  # « TRAORE ET FILS PRIME »
 ]
+
+
+def nom_valide(v: str) -> bool:
+    """Enseigne réellement renseignée (pas « NEANT », « - - - », « EE AE »)."""
+    lettres = re.sub(r"[^A-Za-zÀ-ÿ]", "", v or "")
+    return len(lettres) >= 4 and _key(v) not in ("NEANT", "NEAN", "NONE")
+
+
+def meme_rccm(a: str, b: str) -> bool:
+    """Même registre ; un numéro tronqué par l'OCR (« …A 1067 » / « …A 106714 ») compte comme
+    le même."""
+    x, y = _rccm(a), _rccm(b)
+    return x == y or (min(len(x), len(y)) >= 9 and (x.startswith(y) or y.startswith(x)))
 
 
 def nettoyer_nom_fichier(nom: str) -> str:
@@ -303,6 +333,7 @@ def nettoyer_nom_fichier(nom: str) -> str:
 
 CIVILITES = {"MONSIEUR", "MADAME", "MADEMOISELLE", "MME", "MLLE", "MR", "M"}
 DATE_CONTRADICTOIRE = "lectures contradictoires de la date d'expiration"
+PHOTO_CONTESTEE = "photo jugée lisible par la seconde lecture"
 
 
 def comparer_noms(ref: list[str], other: list[str]) -> str:
@@ -347,6 +378,9 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
             else:
                 rejet(M_INCOMPLET, f"{substitut_ifu} sans numéro IFU, à la place de "
                                    "l'attestation IFU")
+        elif p == "rccm" and not pieces[p]["presente"] and rccm["document_substitut"].strip():
+            vigilance.append(f"{rccm['document_substitut']} à la place du RCCM (association : "
+                             "décision humaine)")
         elif not pieces[p]["presente"]:
             rejet(M_INCOMPLET, f"{PIECE_LABELS[p]} absent(e)")
         elif not pieces[p]["lisible"] and p not in sources_officielles:
@@ -373,21 +407,30 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
     def sans_forme(v):
         return re.sub(FORMES_JURIDIQUES, "", _key(v))
 
-    imprimes = {sans_forme(v) for v in (rccm["enseigne"], rccm["nom_commercial"],
-                                        ifu["nom_etablissement"]) if sans_forme(v)}
-    attendu = (rccm["enseigne"] or rccm["nom_commercial"] or ifu["nom_etablissement"]
-               or fiche["nom_structure"])
+    noms_imprimes = [v for v in (rccm["enseigne"], rccm["nom_commercial"],
+                                 ifu["nom_etablissement"]) if nom_valide(v)]
+    imprimes = {sans_forme(v) for v in noms_imprimes if sans_forme(v)}
+    attendu = (noms_imprimes[0] if noms_imprimes else fiche["nom_structure"])
     fichier = sans_forme(nettoyer_nom_fichier(nom_fichier))
     if COPIE.search(nom_fichier):
         vigilance.append(f"Doublon possible : fichier « {nom_fichier} » nommé comme une copie")
-    if imprimes and fichier not in imprimes:
+    mots_fichier = set(_name_tokens(nettoyer_nom_fichier(nom_fichier)))
+    meme_mots = any(set(_name_tokens(v)) == mots_fichier for v in noms_imprimes)
+    if imprimes and fichier not in imprimes and not meme_mots:
         contenu = any(len(n) >= 4 and (n in fichier or fichier in n) for n in imprimes)
         proche = max(SequenceMatcher(None, fichier, n).ratio() for n in imprimes)
-        if contenu or proche >= 0.85:
+        # mots en commun : « MARCO ET FILS » / « MARCO GRACE ET FILS »
+        communs = max(len(mots_fichier & set(_name_tokens(v))) / max(len(mots_fichier), 1)
+                      for v in noms_imprimes)
+        if contenu or proche >= 0.75 or communs >= 0.5:
             vigilance.append(f"Nom du PDF « {nom_fichier} » proche de la structure "
                              f"« {attendu} » (une lettre ou un mot d'écart)")
-        else:
+        elif {"rccm", "ifu"} & set(sources_officielles):
+            # rejet seulement contre un nom sûr, celui du registre officiel (QR)
             rejet(M_NOM_PDF, f"fichier « {nom_fichier} », structure « {attendu} »")
+        else:
+            vigilance.append(f"Nom du PDF « {nom_fichier} » différent de l'enseigne lue "
+                             f"« {attendu} » (lecture non confirmée par le registre officiel)")
     elif not imprimes and fiche["nom_structure"].strip():
         manuscrit = sans_forme(fiche["nom_structure"].replace("?", ""))
         if manuscrit and SequenceMatcher(None, fichier, manuscrit).ratio() < 0.6:
@@ -407,7 +450,11 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
         elif exp < date_traitement:
             rejet(M_ID_EXPIRE, f"{pid['type'] or 'pièce'} expirée le {exp:%d/%m/%Y}")
         if not pid["photo_lisible"]:
-            rejet(M_PHOTO, "photo absente ou visage non identifiable")
+            if any(PHOTO_CONTESTEE in c for c in incertains):
+                vigilance.append("Photo de la pièce d'identité jugée illisible par une seule "
+                                 "lecture sur deux (à confirmer)")
+            else:
+                rejet(M_PHOTO, "photo absente ou visage non identifiable")
 
     # ---- RCCM ------------------------------------------------------------------------------
     if pieces["rccm"]["presente"] and pieces["rccm"]["lisible"]:
@@ -451,16 +498,18 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
                     continue  # IFU sans nom de personne, rattaché au RCCM par son numéro
                 if cle == "rccm" and cle not in sources_officielles:
                     rejet(M_RCCM_ILLISIBLE, "nom du titulaire illisible sur le RCCM")
+                elif cle == "rccm":
+                    vigilance.append("Nom du titulaire absent du RCCM")
                 else:
-                    vigilance.append("Nom du titulaire absent "
-                                     + ("du RCCM" if cle == "rccm" else "de l'IFU"))
+                    # IFU d'une société ou carte sans nom de personne : simple information
+                    particuliers.append("Pas de nom de personne sur l'IFU")
                 continue
             civilite = [t for t in other if t in CIVILITES and t not in ref]
             if civilite:
-                rejet(M_RCCM_NON_CONFORME, f"civilité « {' '.join(civilite)} » ajoutée au nom "
-                                           f"sur {label} ({other_txt}) ; pièce d'identité "
-                                           f"({ref_txt})")
-                continue
+                # imprimée par le greffe sur le registre officiel : décision humaine (KIK)
+                vigilance.append(f"Civilité « {' '.join(civilite)} » ajoutée au nom sur {label} "
+                                 f"({other_txt}) ; pièce d'identité ({ref_txt})")
+                other = [t for t in other if t not in CIVILITES]
             verdict = comparer_noms(ref, other)
             if verdict == "different":
                 rejet(M_RCCM_NON_CONFORME, f"nom sur {label} ({other_txt}) différent de la "
@@ -479,7 +528,7 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
     # ---- Numéro RCCM cité par l'IFU ------------------------------------------------------
     motif_rccm = re.compile(r"RB\s*/?\s*[A-Z]{2,4}\s*/?\s*\d{2}\s*[A-Z]\s*\d+")
     if (motif_rccm.search(rccm["numero"].upper()) and motif_rccm.search(ifu["rccm"].upper())
-            and _rccm(rccm["numero"]) != _rccm(ifu["rccm"])):
+            and not meme_rccm(rccm["numero"], ifu["rccm"])):
         message = (f"numéro RCCM différent entre RCCM ({rccm['numero']}) et IFU "
                    f"({ifu['rccm']})")
         if {"rccm", "ifu"} <= set(sources_officielles):

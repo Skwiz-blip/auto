@@ -15,7 +15,7 @@ import anthropic
 import fitz
 from PIL import Image
 
-from bench_dossiers import (DATE_CONTRADICTOIRE, ROOT, SCHEMA, SYSTEM, _date, _norm, _rccm, _template, apply_rules,
+from bench_dossiers import (DATE_CONTRADICTOIRE, PHOTO_CONTESTEE, meme_rccm, ROOT, SCHEMA, SYSTEM, _date, _norm, _rccm, _template, apply_rules,
                             conform, load_api_key, marquer_doublons, parse_json)
 from ocr_local import lire_dossier
 import sharepoint
@@ -187,19 +187,31 @@ def socle(ocr: dict) -> tuple[dict, list[str]]:
                               "nom_commercial": ("rccm", "nom_commercial")},
                      "ifu": {"ifu": ("ifu", "numero"), "rccm": ("ifu", "rccm")},
                      "apiex": {"ifu": ("ifu", "numero"), "rccm": ("ifu", "rccm")},
-                     "piece_identite": {"npi": ("piece_identite", "numero")},
+                     "cnss": {"ifu": ("ifu", "numero")},
+                     "piece_identite": {"npi": ("piece_identite", "numero"),
+                                        "telephone": ("piece_identite", "telephone")},
                      }.get(piece, {}).get(cle)
             if cible and isinstance(valeur, str) and not data[cible[0]][cible[1]]:
                 data[cible[0]][cible[1]] = valeur
     # le papier et le portail doivent désigner le même registre
     local_rccm = ocr["champs"].get("rccm", {}).get("rccm", "")
-    if rccm.get("rccm") and local_rccm and _rccm(local_rccm) != _rccm(rccm["rccm"]):
+    if rccm.get("rccm") and local_rccm and not meme_rccm(local_rccm, rccm["rccm"]):
         doutes.append(f"numéro RCCM du papier ({local_rccm}) différent du registre officiel "
                       f"({rccm['rccm']})")
     for piece in ("fiche", "rccm", "ifu", "piece_identite"):
         pages = [int(p) for p, t in ocr["pages"].items() if t == piece]
         if pages and not data["pieces"][piece]["presente"]:
             data["pieces"][piece].update(presente=True, lisible=True, pages=pages)
+    # pièces de remplacement reconnues en local (règles KIK) : carte professionnelle ou
+    # attestation CNSS à la place de l'IFU, récépissé d'ONG à la place du RCCM
+    types = set(ocr["pages"].values())
+    if not data["pieces"]["ifu"]["presente"] and not data["ifu"]["document_substitut"]:
+        if "apiex" in types:
+            data["ifu"]["document_substitut"] = "Carte professionnelle"
+        elif "cnss" in types:
+            data["ifu"]["document_substitut"] = "Attestation CNSS (matricule = n° IFU)"
+    if not data["pieces"]["rccm"]["presente"] and "ong" in types:
+        data["rccm"]["document_substitut"] = "Récépissé de déclaration d'ONG"
     return data, doutes
 
 
@@ -273,9 +285,10 @@ DATE_SCHEMA = {"type": "object", "additionalProperties": False,
                               "remarque": {"type": "string"}}}
 
 DATE_CONSIGNE = """Cette image est le bas d'une pièce d'identité béninoise (CIP/CNI), agrandi.
-Lis UNIQUEMENT la date d'expiration ("Expire le ..."), chiffre par chiffre.
+Lis UNIQUEMENT la date d'expiration ("Expire le ..."), chiffre par chiffre, et recopie-la
+TELLE QU'IMPRIMÉE au format JJ/MM/AAAA (le premier nombre est le jour).
 Réponds par ce JSON, sans rien d'autre :
-{"date_expiration": "AAAA-MM-JJ", "lisible": true/false, "remarque": ""}
+{"date_expiration": "JJ/MM/AAAA", "lisible": true/false, "remarque": ""}
 Si tu n'es pas absolument certain de chaque chiffre : date_expiration = "" et lisible = false."""
 
 
@@ -328,6 +341,33 @@ async def relire_date(client, pdf: Path, ocr: dict, args,
     lu = json.loads(texte)
     usage = {"in": reponse.usage.input_tokens, "out": reponse.usage.output_tokens}
     return (lu.get("date_expiration", "") if lu.get("lisible") else ""), usage
+
+
+PHOTO_SCHEMA = {"type": "object", "additionalProperties": False,
+                "required": ["visage_reconnaissable", "remarque"],
+                "properties": {"visage_reconnaissable": {"type": "boolean"},
+                               "remarque": {"type": "string"}}}
+PHOTO_CONSIGNE = """Cette image contient une pièce d'identité (CIP, CNI ou passeport), parfois
+scannée de travers. La photo du titulaire est-elle présente et son visage reconnaissable
+(on distingue les traits, même si l'image est pâle ou grise) ? Réponds par ce JSON :
+{"visage_reconnaissable": true/false, "remarque": ""}"""
+
+
+async def avis_photo(client, pdf: Path, page: int, angle: int, args) -> tuple[bool, dict]:
+    """Deuxième avis, indépendant, avant tout rejet pour « Photo illisible »."""
+    image = (await asyncio.to_thread(images_pages, pdf, [page], {page: angle}, 1600,
+                                     args.quality))[0][1]
+    options = {"thinking": {"type": "disabled"}} if MODEL != MODELES["haiku"][0] else {}
+    reponse = await client.messages.create(
+        model=MODEL, max_tokens=200,
+        messages=[{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                         "data": base64.standard_b64encode(image).decode()}},
+            {"type": "text", "text": PHOTO_CONSIGNE}]}],
+        output_config={"format": {"type": "json_schema", "schema": PHOTO_SCHEMA}}, **options)
+    lu = json.loads(next(b.text for b in reponse.content if b.type == "text"))
+    usage = {"in": reponse.usage.input_tokens, "out": reponse.usage.output_tokens}
+    return bool(lu.get("visage_reconnaissable")), usage
 
 
 async def traiter(client, pdf: Path, ocr: dict, args, sem) -> tuple[dict, dict]:
@@ -401,7 +441,8 @@ async def traiter(client, pdf: Path, ocr: dict, args, sem) -> tuple[dict, dict]:
                 # pièce d'identité introuvable dans les pages envoyées : avant de conclure à une
                 # pièce manquante, on montre toutes les pages de tête (une CIP scannée à
                 # l'envers peut avoir été prise pour autre chose)
-                if not claude["pieces"]["piece_identite"]["presente"]:
+                if not (claude["pieces"]["piece_identite"]["presente"]
+                        and claude["pieces"]["fiche"]["presente"]):
                     qr = {c.get("page") for c in ocr.get("officiel", {}).values()}
                     tete = [p for p in range(1, min(ocr["nb_pages"], 8) + 1) if p not in qr]
                     if set(tete) - set(pages):
@@ -420,6 +461,22 @@ async def traiter(client, pdf: Path, ocr: dict, args, sem) -> tuple[dict, dict]:
                     row["t_api_s"] = round(time.perf_counter() - t0, 2)
                 data, doutes_fusion = fusionner(base, claude, ocr, date_gros_plan)
                 doutes += doutes_fusion
+                # photo jugée illisible : deuxième avis avant tout rejet
+                pid_pages = ([int(p) for p, t in ocr["pages"].items() if t == "piece_identite"]
+                             or [int(p) for p in data["pieces"]["piece_identite"]["pages"]
+                                 if str(p).isdigit() and 1 <= int(p) <= ocr["nb_pages"]])
+                if (data["pieces"]["piece_identite"]["presente"] and pid_pages
+                        and not data["piece_identite"]["photo_lisible"]):
+                    angle = ocr.get("rotations", {}).get(str(pid_pages[0]),
+                                                         ocr.get("rotations", {}).get(pid_pages[0], 0))
+                    lisible, usage_photo = await avis_photo(client, pdf, pid_pages[0], angle, args)
+                    row["tokens_in"] += usage_photo["in"]
+                    row["tokens_out"] += usage_photo["out"]
+                    row["cout_usd"] = round(row["tokens_in"] * PRICE_IN
+                                            + row["tokens_out"] * PRICE_OUT, 5)
+                    journal["avis_photo"] = lisible
+                    if lisible:
+                        doutes.append(PHOTO_CONTESTEE)
             data["analyse"]["champs_incertains"] = list(dict.fromkeys(
                 data["analyse"]["champs_incertains"] + doutes))
             sures = {p for p in ("rccm", "ifu") if p in ocr.get("officiel", {})}

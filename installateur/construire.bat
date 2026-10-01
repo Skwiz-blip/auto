@@ -12,11 +12,9 @@ set ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe
 if not exist "%ISCC%" set ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe
 if not exist "%ISCC%" (echo [X] Inno Setup introuvable. & pause & exit /b 1)
 
-echo [2/4] Copie de Tesseract OCR (programme et bibliotheques seulement)...
-if exist tmp rmdir /s /q tmp
-mkdir tmp\tesseract
-copy /y "C:\Program Files\Tesseract-OCR\tesseract.exe" tmp\tesseract\ >nul || (echo [X] Tesseract introuvable. & pause & exit /b 1)
-copy /y "C:\Program Files\Tesseract-OCR\*.dll" tmp\tesseract\ >nul
+echo [2/4] Modeles PP-OCR (telecharges une fois, puis embarques dans l'application)...
+python -m pip install --quiet -r ..\requirements.txt
+python -c "from rapidocr import RapidOCR; RapidOCR()" >nul 2>&1 || (echo [X] Modeles PP-OCR indisponibles. & pause & exit /b 1)
 
 echo [3/4] Application (PyInstaller)...
 python -m PyInstaller --noconfirm --clean --distpath dist --workpath tmp\build controle_kik.spec

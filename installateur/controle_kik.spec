@@ -2,19 +2,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 ICI = Path(SPECPATH)
 PROJET = ICI.parent
-TESSERACT = ICI / "tmp" / "tesseract"   # copie réduite préparée par construire.bat
 
 datas = [
     (str(PROJET / "application" / "ui"), "ui"),
-    (str(PROJET / "tessdata"), "tessdata"),
     (str(PROJET / "MODELE SHAREPOINT VC.xlsx"), "."),
-    (str(TESSERACT), "tesseract"),
-]
-binaries = collect_dynamic_libs("pyzbar")          # libzbar-64.dll, libiconv.dll
+] + collect_data_files("rapidocr")                 # modèles PP-OCR (~31 Mo) et configuration
+binaries = collect_dynamic_libs("pyzbar") + collect_dynamic_libs("onnxruntime")
 msvcr = Path(r"C:\Windows\System32\msvcr120.dll")  # requis par libzbar
 if msvcr.exists():
     binaries.append((str(msvcr), "."))
@@ -25,7 +22,8 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=["controle", "sharepoint", "ocr_local", "qr_officiel", "bench_dossiers",
-                   "chemins", "openpyxl"] + collect_submodules("webview"),
+                   "chemins", "referentiel", "openpyxl", "onnxruntime"]
+                  + collect_submodules("webview") + collect_submodules("rapidocr"),
     excludes=["tkinter", "matplotlib", "IPython", "pytest"],
 )
 pyz = PYZ(a.pure)

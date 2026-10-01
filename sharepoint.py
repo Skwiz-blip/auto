@@ -16,7 +16,7 @@ from openpyxl.styles import PatternFill
 
 import chemins
 import referentiel
-from bench_dossiers import SCHEMA, conform
+from bench_dossiers import SCHEMA, conform, nom_valide
 from qr_officiel import numero_benin
 
 MODELE = chemins.MODELE
@@ -32,8 +32,9 @@ def ligne(journal: dict, date_transmission: str) -> list[str]:
     # conform : complète les champs absents des résultats plus anciens (ex. nombre_head)
     e = conform(journal["extraction"], SCHEMA)
     fiche, rccm, ifu, pid = e["fiche"], e["rccm"], e["ifu"], e["piece_identite"]
-    structure = (rccm["enseigne"] or rccm["nom_commercial"] or ifu["nom_etablissement"]
-                 or fiche["nom_structure"]).strip()
+    structure = next((v for v in (rccm["enseigne"], rccm["nom_commercial"],
+                                   ifu["nom_etablissement"]) if nom_valide(v)),
+                     fiche["nom_structure"]).strip()
     # promoteur : nom et prénoms du RCCM (à défaut, ceux de la pièce d'identité)
     nom = (rccm["nom"] or pid["nom"]).strip().upper()
     prenoms = (rccm["prenoms"] or pid["prenoms"]).strip().upper()

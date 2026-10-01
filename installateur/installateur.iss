@@ -1,6 +1,6 @@
 ; Installateur Inno Setup de « Contrôle KIK » (compilé par construire.bat).
 ; Installation sans droits administrateur, dans %LOCALAPPDATA%\Programs\Controle KIK.
-; Tesseract OCR et le lecteur de QR sont embarqués : rien d'autre à installer.
+; La lecture des documents (PP-OCR) et le lecteur de QR sont embarqués : rien d'autre à installer.
 ; La clé API Claude se colle ensuite dans l'application (Paramètres).
 
 #define Nom "Contrôle KIK"
