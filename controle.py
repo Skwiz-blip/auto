@@ -155,7 +155,7 @@ def socle(ocr: dict) -> tuple[dict, list[str]]:
     for source, cible in (("rccm", "numero"), ("nom", "nom"), ("prenoms", "prenoms"),
                           ("enseigne", "enseigne"), ("nom_commercial", "nom_commercial"),
                           ("nationalite", "nationalite"), ("activite", "activite"),
-                          ("date_naissance", "date_naissance"),
+                          ("date_naissance", "date_naissance"), ("telephone", "telephone"),
                           ("lieu_naissance", "lieu_naissance")):
         if rccm.get(source):
             data["rccm"][cible] = rccm[source]
@@ -168,7 +168,7 @@ def socle(ocr: dict) -> tuple[dict, list[str]]:
     for source, cible in (("ifu", "numero"), ("rccm", "rccm"), ("nom", "nom"),
                           ("prenoms", "prenoms"), ("nom_etablissement", "nom_etablissement"),
                           ("categorie", "categorie"), ("regime_fiscal", "regime_fiscal"),
-                          ("centre_impots", "centre_impots")):
+                          ("centre_impots", "centre_impots"), ("telephone", "telephone")):
         if ifu.get(source):
             data["ifu"][cible] = ifu[source]
     if "apiex" in officiel:

@@ -18,6 +18,9 @@ from pathlib import Path
 import webview
 
 ICI = Path(__file__).resolve().parent
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(ICI.parent))  # en développement, le moteur est le dossier parent
+import chemins  # noqa: E402
 DONNEES = Path(os.environ.get("APPDATA", str(ICI))) / "KIK-Controle"
 CONFIG = DONNEES / "config.json"
 MOTEUR_DEFAUT = ICI.parent  # l'application vit dans AUTO\application
@@ -104,7 +107,7 @@ def _source(sortie: Path) -> dict:
     try:
         return json.loads((sortie / "source.json").read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
-        return {"dossier": str(moteur() / "Dossier test"), "modele": ""}
+        return {"dossier": str(chemins.DONNEES / "Dossier test"), "modele": ""}
 
 
 def _raison_courte(texte: str) -> str:
@@ -169,7 +172,8 @@ class Api:
         cle = cle_api()
         return {"a_cle": bool(cle), "cle_apercu": f"…{cle[-4:]}" if cle else "",
                 "modele": cfg.get("modele", "haiku"), "moteur": str(moteur()),
-                "moteur_ok": (moteur() / "controle.py").exists(),
+                "moteur_ok": chemins.INSTALLE or (moteur() / "controle.py").exists(),
+                "installe": chemins.INSTALLE, "donnees": str(chemins.DONNEES),
                 "cout": COUT_PAR_DOSSIER, "minutes": MINUTES_PAR_DOSSIER}
 
     def enregistrer(self, cle: str = "", modele: str = "", chemin_moteur: str = "") -> dict:
@@ -227,18 +231,23 @@ class Api:
             cle = cle_api()
             if not cle:
                 return {"ok": False, "message": "Ajoutez d'abord votre clé API dans Paramètres."}
-            script = moteur() / "controle.py"
-            if not script.exists():
-                return {"ok": False, "message": f"Moteur introuvable : {script}"}
-            commande = [sys.executable, "-u", str(script), "--dossier", dossier,
-                        "--modele", modele, "--jobs", str(max(2, min(6, (os.cpu_count() or 4) - 2)))]
+            if chemins.INSTALLE:
+                # application installée : le même exe fait tourner le moteur
+                commande, dossier_travail = [sys.executable, "--moteur"], chemins.DONNEES
+            else:
+                script = moteur() / "controle.py"
+                if not script.exists():
+                    return {"ok": False, "message": f"Moteur introuvable : {script}"}
+                commande, dossier_travail = [sys.executable, "-u", str(script)], moteur()
+            commande += ["--dossier", dossier, "--modele", modele,
+                         "--jobs", str(max(2, min(6, (os.cpu_count() or 4) - 2)))]
             if reprendre:
                 commande += ["--reprendre", reprendre]
             env = {**os.environ, "ANTHROPIC_API_KEY": cle, "PYTHONIOENCODING": "utf-8"}
             DONNEES.mkdir(parents=True, exist_ok=True)
             erreurs = open(DONNEES / "dernier_lancement_erreurs.txt", "w", encoding="utf-8")
             self._processus = subprocess.Popen(
-                commande, cwd=str(moteur()), env=env, stdout=subprocess.PIPE, stderr=erreurs,
+                commande, cwd=str(dossier_travail), env=env, stdout=subprocess.PIPE, stderr=erreurs,
                 text=True, encoding="utf-8", errors="replace", creationflags=SANS_FENETRE)
             self._etat = self._etat_vide() | {"en_cours": True, "debut": time.time()}
             if reprendre:
@@ -313,7 +322,7 @@ class Api:
     # ---- résultats
 
     def lancements(self) -> list[dict]:
-        racine = moteur() / "sorties"
+        racine = chemins.SORTIES
         liste = []
         for sortie in sorted(racine.glob("controle_*"), reverse=True):
             journaux = _journaux(sortie)
@@ -452,7 +461,6 @@ class Api:
 
     def sharepoint(self, sortie: str) -> dict:
         """Modèle SharePoint rempli avec les dossiers validés du lancement, puis ouvert."""
-        sys.path.insert(0, str(moteur()))
         try:
             import sharepoint
             fichier = sharepoint.remplir_depuis(Path(sortie))
@@ -461,7 +469,7 @@ class Api:
         except (ImportError, OSError, ValueError) as e:
             return {"ok": False, "message": f"Fichier SharePoint impossible : {e}"}
         if not fichier:
-            fichier = Path(moteur()) / "MODELE SHAREPOINT VC.xlsx"
+            fichier = chemins.MODELE
             if fichier.exists():
                 os.startfile(fichier)
             return {"ok": False, "message": "Rien de nouveau : les dossiers validés de ce "
@@ -508,7 +516,30 @@ class Api:
         return {"ok": True}
 
 
+def moteur_integre() -> None:
+    """Application installée : « Controle KIK.exe --moteur … » fait tourner le moteur de contrôle
+    (lancé en arrière-plan par la fenêtre, qui lit sa sortie)."""
+    import asyncio
+    import io
+    # exe sans console : si aucun canal de sortie n'a été transmis, on écrit dans un journal
+    if sys.stdout is None:
+        sys.stdout = open(chemins.DONNEES / "moteur_sortie.txt", "w", encoding="utf-8")
+    elif hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
+    if sys.stderr is None:
+        sys.stderr = sys.stdout
+    sys.argv = [sys.argv[0]] + [a for a in sys.argv[1:] if a != "--moteur"]
+    import controle
+    asyncio.run(controle.main())
+
+
 def main():
+    import multiprocessing
+    multiprocessing.freeze_support()  # processus de lecture lancés par le moteur (exe)
+    chemins.preparer()
+    if "--moteur" in sys.argv:
+        moteur_integre()
+        return
     api = Api()
     fenetre = webview.create_window(
         "Contrôle des dossiers marchands", url=str(ICI / "ui" / "index.html"), js_api=api,

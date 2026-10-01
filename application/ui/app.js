@@ -394,6 +394,7 @@ async function afficherParametres() {
     : "Aucune clé enregistrée. Collez votre clé API Claude ci-dessous.";
   $("oublier-cle").hidden = !c.a_cle;
   document.querySelectorAll("#modele-defaut button").forEach((b) => b.classList.toggle("actif", b.dataset.modele === c.modele));
+  $("carte-moteur").hidden = !!c.installe;  // application installée : moteur intégré
   $("moteur").value = c.moteur;
   $("moteur-etat").textContent = c.moteur_ok ? "Moteur trouvé (controle.py)." : "controle.py introuvable dans ce dossier.";
 }

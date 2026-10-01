@@ -16,7 +16,9 @@ from pathlib import Path
 import anthropic
 import fitz  # PyMuPDF
 
-ROOT = Path(__file__).parent
+import chemins
+
+ROOT = chemins.DONNEES
 MODEL = "claude-sonnet-4-5"
 PRICE_IN, PRICE_OUT = 3.00 / 1e6, 15.00 / 1e6  # $/token, Claude Sonnet 4.5
 
@@ -73,7 +75,7 @@ SCHEMA = _obj({
         "date_emission", "telephone", "document_substitut"]} | {"cachet_dgi": B}),
     "piece_identite": _obj({k: S for k in [
         "type", "numero", "nom", "prenoms", "date_naissance",
-        "lieu_naissance", "nationalite", "date_expiration"]} | {
+        "lieu_naissance", "nationalite", "date_expiration", "telephone"]} | {
         "photo_lisible": B}),
     "analyse": _obj({
         "plusieurs_points_de_vente": B,
@@ -113,6 +115,8 @@ Règles de saisie :
   Sur la fiche, recopie tout ce que tu arrives à lire, même partiellement, en mettant « ? »
   à la place de chaque lettre ou chiffre illisible. Laisse "" uniquement si la case est
   vraiment vide sur le formulaire.
+- rccm.telephone / piece_identite.telephone : numéro imprimé sur le RCCM (« Tel : ») et sur la
+  CIP (« Numéro de téléphone »), tel qu'écrit.
 - Dates au format AAAA-MM-JJ quand elles sont lisibles, sinon "".
 - Coordonnées GPS : recopie les nombres tels qu'écrits (point décimal).
 - Booléens de signature / cachet : true seulement si l'élément est visible sur le scan.

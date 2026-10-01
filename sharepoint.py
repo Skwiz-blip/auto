@@ -12,41 +12,49 @@ from datetime import date
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
 
+import chemins
+import referentiel
 from bench_dossiers import SCHEMA, conform
+from qr_officiel import numero_benin
 
-ROOT = Path(__file__).resolve().parent
-MODELE = ROOT / "MODELE SHAREPOINT VC.xlsx"
+MODELE = chemins.MODELE
+A_COMPLETER = PatternFill("solid", fgColor="FFD8A8")  # orange clair
 
 
-def _compte(valeur: str, defaut: str) -> str:
-    """« 1 », « 01 », « 1 head » -> « 01 » ; case vide ou illisible -> valeur par défaut."""
-    chiffres = re.sub(r"\D", "", valeur or "")
-    return chiffres.zfill(2) if chiffres else defaut
+PRINCIPAL_MAX, SOUS_COMPTES_MAX = 10, 20  # au-delà : chiffre mal lu, valeur par défaut
 
 
 def ligne(journal: dict, date_transmission: str) -> list[str]:
+    """Imprimé d'abord (RCCM, IFU), manuscrit ensuite : l'écriture de la fiche est la source la
+    moins sûre. Ville et département sont ramenés au référentiel des communes du Bénin."""
     # conform : complète les champs absents des résultats plus anciens (ex. nombre_head)
     e = conform(journal["extraction"], SCHEMA)
-    fiche, rccm, pid = e["fiche"], e["rccm"], e["piece_identite"]
-    structure = fiche["nom_structure"].strip() or rccm["enseigne"] or rccm["nom_commercial"]
+    fiche, rccm, ifu, pid = e["fiche"], e["rccm"], e["ifu"], e["piece_identite"]
+    structure = (rccm["enseigne"] or rccm["nom_commercial"] or ifu["nom_etablissement"]
+                 or fiche["nom_structure"]).strip()
     # promoteur : nom et prénoms du RCCM (à défaut, ceux de la pièce d'identité)
-    nom = (rccm["nom"] or pid["nom"]).strip()
-    prenoms = (rccm["prenoms"] or pid["prenoms"]).strip()
-    contact = re.sub(r"[^\d?+]", "", fiche["telephone"])  # « 01 69 83 76 30 » -> « 0169837630 »
+    nom = (rccm["nom"] or pid["nom"]).strip().upper()
+    prenoms = (rccm["prenoms"] or pid["prenoms"]).strip().upper()
+    # contact : numéro imprimé sur le RCCM, puis l'IFU, puis celui écrit sur la fiche
+    contact = (numero_benin(rccm["telephone"]) or numero_benin(pid["telephone"])
+               or numero_benin(ifu["telephone"]) or numero_benin(fiche["telephone"])
+               or re.sub(r"[^\d?+]", "", fiche["telephone"]))
+    ville = referentiel.commune(fiche["ville"])
     return [
-        date_transmission,                                   # A DATE DE TRANSMISSION
-        structure,                                           # B NOM STRUCTURE
-        _compte(fiche["nombre_head"], "01"),                 # C PRINCIPAL
-        _compte(fiche["nombre_sous_comptes"], "00"),         # D SOUS COMPTE
-        nom, prenoms, contact,                               # E-G PROMOTEUR
-        nom, prenoms, contact,                               # H-J GESTIONNAIRE (le même)
-        fiche["secteur"].strip(),                            # K SECTEUR D'ACTIVITE
-        fiche["departement"].strip(),                        # L DEPARTEMENT
-        fiche["ville"].strip(),                              # M VILLE/COMMUNE
-        fiche["quartier"].strip(),                           # N SITUATION GEOGRAPHIQUE
-        fiche["commercial"].strip(),                         # O NOM DU COMMERCIAL
-        "",                                                  # P NUMERO ATTRIBUE (laissé vide)
+        date_transmission,                                                   # A
+        structure,                                                           # B STRUCTURE
+        referentiel.nombre_comptes(fiche["nombre_head"], "01", PRINCIPAL_MAX),          # C
+        referentiel.nombre_comptes(fiche["nombre_sous_comptes"], "00", SOUS_COMPTES_MAX),  # D
+        nom, prenoms, contact,                                               # E-G PROMOTEUR
+        nom, prenoms, contact,                                               # H-J GESTIONNAIRE
+        fiche["secteur"].strip(),                                            # K SECTEUR
+        referentiel.departement(fiche["departement"], ville) or fiche["departement"].strip(),
+        ville or fiche["ville"].strip(),                                     # M VILLE/COMMUNE
+        fiche["quartier"].strip(),                                           # N SITUATION GEO.
+        referentiel.commercial(fiche["commercial"]),                          # O COMMERCIAL
+        "",                                                                  # P (laissé vide)
     ]
 
 
@@ -80,6 +88,9 @@ def remplir(sortie: Path, journaux: list[dict], date_transmission: str = "") -> 
         for col, valeur in enumerate(ligne(journal, date_transmission), start=1):
             cellule = feuille.cell(row=n, column=col, value=valeur)
             cellule.number_format = "@"  # texte : garde le 0 des numéros et de « 01 »
+            # à compléter à la main : caractère illisible, contact non conforme
+            if "?" in str(valeur) or (col in (7, 10) and not re.fullmatch(r"01\d{8}", valeur)):
+                cellule.fill = A_COMPLETER
     shutil.copy2(MODELE, sortie / f"{MODELE.stem} (avant).xlsx")
     classeur.save(MODELE)  # PermissionError si le fichier est ouvert dans Excel
     with open(registre, "a", encoding="utf-8") as f:

@@ -23,8 +23,10 @@ import numpy as np
 from PIL import Image
 from pyzbar import pyzbar
 
+import chemins
+
 ROOT = Path(__file__).parent
-CACHE = ROOT / "sorties" / "cache_qr"
+CACHE = chemins.SORTIES / "cache_qr"
 AGENT = "Mozilla/5.0 (controle dossiers marchands Celtiis Cash)"
 DELAI = 45
 PAUSE = 0.5  # secondes entre deux consultations du portail (par processus)
@@ -114,6 +116,18 @@ def _apres(texte: str, etiquette: str, longueur: int = 90) -> str:
     return " ".join(m.group(1).split()) if m else ""
 
 
+def numero_benin(brut: str) -> str:
+    """Numéro au format béninois actuel, 10 chiffres commençant par 01 : « +229 94 24 34 04 »
+    -> « 0194243404 » (depuis 2024, les anciens numéros à 8 chiffres prennent le préfixe 01).
+    Chaîne vide si ce n'est pas un numéro béninois reconnaissable."""
+    chiffres = re.sub(r"\D", "", brut or "")
+    if chiffres.startswith("229") and len(chiffres) in (11, 13):
+        chiffres = chiffres[3:]
+    if len(chiffres) == 8:
+        chiffres = "01" + chiffres
+    return chiffres if re.fullmatch(r"01\d{8}", chiffres) else ""
+
+
 def analyser(texte: str) -> dict:
     """Champs utiles d'un extrait RCCM, d'une attestation IFU ou d'une carte APIEx."""
     champs = {}
@@ -121,6 +135,9 @@ def analyser(texte: str) -> dict:
         champs["rccm"] = " ".join(m.group().split())
     if m := re.search(r"\b\d{13}\b", texte):
         champs["ifu"] = m.group()
+    # « TEL.: +22994243404 », « Tel : 0197857021 », « Téléphone : +229 01 97 … »
+    if m := re.search(r"T[ée]l(?:[ée]phone)?\.?\s*:?\s*(\+?\d[\d .]{6,18}\d)", texte, re.IGNORECASE):
+        champs["telephone"] = numero_benin(m.group(1))
 
     if "EXTRAIT DU REGISTRE" in texte.upper():
         champs["type"] = "rccm"

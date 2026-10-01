@@ -27,10 +27,11 @@ import fitz
 import pytesseract
 from PIL import Image
 
+import chemins
+
 ROOT = Path(__file__).parent
-os.environ.setdefault("TESSDATA_PREFIX", str(ROOT / "tessdata"))
-pytesseract.pytesseract.tesseract_cmd = os.environ.get(
-    "TESSERACT_EXE", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+os.environ.setdefault("TESSDATA_PREFIX", str(chemins.TESSDATA))
+pytesseract.pytesseract.tesseract_cmd = os.environ.get("TESSERACT_EXE", chemins.TESSERACT_EXE)
 LANGUES = "fra+eng"
 
 # Marqueurs cherchés dans l'en-tête des pages (texte normalisé sans accents)

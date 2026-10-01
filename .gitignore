@@ -4,3 +4,7 @@ Dossier test/
 __pycache__/
 .claude/
 New test
+
+installateur/tmp/
+installateur/dist/
+installateur/sortie/
