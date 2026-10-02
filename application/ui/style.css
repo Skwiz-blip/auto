@@ -104,7 +104,7 @@ select { padding-right: 28px; max-width: 360px; }
 .aide { margin: 10px 0 0; color: var(--encre-3); font-size: 13px; }
 
 /* ---------- indicateurs ---------- */
-.kpis { display: grid; grid-template-columns: 1.3fr repeat(5, 1fr); gap: 12px; margin-bottom: 16px; }
+.kpis { display: grid; grid-template-columns: 1.3fr repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
 .kpi {
   border: 1px solid var(--bord); border-radius: var(--rayon); padding: 14px 16px;
   display: flex; flex-direction: column; gap: 2px; box-shadow: var(--ombre); min-width: 0;
@@ -202,6 +202,7 @@ td.pourquoi { color: var(--encre-2); max-width: 460px; }
 .bas-formulaire { display: flex; justify-content: flex-end; align-items: center; gap: 14px; padding-top: 16px; }
 .alerte { margin: 0; color: #9c2525; background: var(--rejet-fond); padding: 8px 12px; border-radius: 8px; }
 .bas-formulaire .alerte { margin-right: auto; }
+.alerte-texte { color: #8a5a00; font-weight: 600; }
 
 .progression { height: 10px; border-radius: 999px; background: var(--surface); overflow: hidden; border: 1px solid var(--bord); }
 #progression-barre { height: 100%; width: 0; background: var(--bleu); border-radius: 999px; transition: width .4s; }
@@ -262,3 +263,13 @@ dl.infos dd { margin: 0; word-break: break-word; }
   .kpis { grid-template-columns: repeat(3, 1fr); }
   .grille2 { grid-template-columns: 1fr; }
 }
+
+/* ---------- commercial : filtre et regroupement ---------- */
+.outils-table { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.outils-table select { max-width: 260px; }
+.case { display: flex; align-items: center; gap: 6px; color: var(--encre-2); cursor: pointer; white-space: nowrap; }
+.etape-corps > .case { margin-top: 10px; }
+td.commercial { color: var(--encre-2); white-space: nowrap; }
+tr.groupe td { background: var(--bleu-clair); color: var(--bleu-fonce); padding: 8px 12px; cursor: default; }
+tr.groupe span { margin-left: 10px; color: var(--encre-2); font-size: 12.5px; }
+tbody tr.groupe:hover { background: var(--bleu-clair); }

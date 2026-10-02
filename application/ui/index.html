@@ -8,10 +8,7 @@
 </head>
 <body>
   <aside class="barre">
-    <div class="marque">
-      <span class="logo" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" /></svg>
-      </span>
+    <div class="marque"> 
       <div>
         <strong>Contrôle</strong>
         <small>Dossiers marchands</small>
@@ -80,11 +77,6 @@
             <span class="kpi-sous" id="k-rejet-p"></span>
           </div>
           <div class="kpi">
-            <span class="kpi-lib">Coût Claude</span>
-            <span class="kpi-val" id="k-cout">0 $</span>
-            <span class="kpi-sous" id="k-cout-p"></span>
-          </div>
-          <div class="kpi">
             <span class="kpi-lib">Durée</span>
             <span class="kpi-val" id="k-duree">–</span>
             <span class="kpi-sous" id="k-modele"></span>
@@ -111,13 +103,17 @@
         <div class="carte">
           <div class="carte-tete">
             <h2>Dossiers</h2>
-            <input type="search" id="recherche" placeholder="Rechercher un dossier…">
+            <div class="outils-table">
+              <select id="choix-commercial" aria-label="Commercial"></select>
+              <label class="case"><input type="checkbox" id="grouper"> Regrouper par commercial</label>
+              <input type="search" id="recherche" placeholder="Rechercher un dossier…">
+            </div>
           </div>
           <div class="filtres" id="filtres" role="tablist"></div>
           <div class="table-cadre">
             <table>
               <thead>
-                <tr><th>Statut</th><th>Dossier</th><th>Pourquoi</th><th>RCCM / IFU</th><th class="num">Coût</th></tr>
+                <tr><th>Statut</th><th>Dossier</th><th>Commercial</th><th>Pourquoi</th><th>RCCM / IFU</th></tr>
               </thead>
               <tbody id="lignes"></tbody>
             </table>
@@ -144,20 +140,11 @@
               <button class="btn secondaire" id="choisir">Choisir un dossier…</button>
               <span id="chemin" class="chemin">Aucun dossier choisi</span>
             </div>
+            <label class="case"><input type="checkbox" id="recontroler"> Recontrôler aussi les dossiers déjà contrôlés</label>
           </div>
         </div>
         <div class="etape">
           <span class="num-etape">2</span>
-          <div class="etape-corps">
-            <h2>Modèle</h2>
-            <div class="segment" id="modele">
-              <button data-modele="haiku" class="actif">Haiku <small>recommandé</small></button>
-              <button data-modele="sonnet">Sonnet</button>
-            </div>
-          </div>
-        </div>
-        <div class="etape">
-          <span class="num-etape">3</span>
           <div class="etape-corps">
             <h2>Estimation</h2>
             <p id="estimation" class="sous">Choisissez un dossier pour voir l'estimation.</p>
@@ -179,8 +166,8 @@
           <span><strong id="s-fait">0</strong> / <span id="s-total">0</span> dossiers</span>
           <span>Écoulé <strong id="s-ecoule">0 min</strong></span>
           <span id="s-reste"></span>
-          <span>Coût <strong id="s-cout">0,00 $</strong></span>
         </div>
+        <p class="sous" id="s-phase"></p>
         <div class="suivi-compte" id="s-compte"></div>
         <ul class="derniers" id="s-derniers"></ul>
         <p id="s-erreur" class="alerte" hidden></p>
@@ -217,15 +204,6 @@
         </div>
         <p id="cle-message" class="message" hidden></p>
         <p class="aide">La clé est chiffrée avec votre compte Windows et n'est transmise qu'à Claude.</p>
-      </div>
-
-      <div class="carte">
-        <h2>Modèle par défaut</h2>
-        <div class="segment" id="modele-defaut">
-          <button data-modele="haiku">Haiku <small>~0,017 $ / dossier</small></button>
-          <button data-modele="sonnet">Sonnet <small>~0,045 $ / dossier</small></button>
-        </div>
-        <p class="aide">Sur 49 dossiers vérifiés, les deux modèles donnent la même qualité ; Haiku coûte près de 3 fois moins.</p>
       </div>
 
       <div class="carte" id="carte-moteur">

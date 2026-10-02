@@ -3,7 +3,6 @@
 const $ = (id) => document.getElementById(id);
 const api = () => window.pywebview.api;
 const nombre = new Intl.NumberFormat("fr-FR");
-const dollars = (v, d = 2) => `${v.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d })} $`;
 const pourcent = (n, total) => total ? `${Math.round((100 * n) / total)} %` : "–";
 const echapper = (t) => String(t ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -22,7 +21,8 @@ const pilule = (s) => `<span class="statut ${STATUTS[s].classe}">${STATUTS[s].ic
 
 const etat = {
   config: null, lancements: [], sortie: "", donnees: null, filtre: "tous", recherche: "",
-  dossier: "", nbPdf: 0, modele: "haiku", suivi: null, detail: null,
+  commercial: "", grouper: false,
+  dossier: "", nbPdf: 0, nbTraites: 0, suivi: null, detail: null,
 };
 
 /* ---------------------------------------------------------------- navigation */
@@ -68,8 +68,7 @@ async function rafraichirConfig() {
   $("etat-connexion").innerHTML =
     `<span class="point" style="background:${pret ? "var(--ok)" : "var(--attention)"}"></span>` +
     (pret ? "Prêt" : !c.a_cle ? "Clé API à ajouter" : "Moteur introuvable");
-  if (!etat.suivi?.en_cours) etat.modele = c.modele;
-  majModele();
+  majEstimation();
 }
 
 /* ---------------------------------------------------------------- tableau de bord */
@@ -88,7 +87,7 @@ async function chargerLancements() {
   if (!etat.lancements.some((l) => l.sortie === etat.sortie)) etat.sortie = etat.lancements[0].sortie;
   choix.innerHTML = etat.lancements.map((l) => {
     const suffixe = l.en_cours ? " · en cours" : l.termine ? "" : " · interrompu";
-    return `<option value="${echapper(l.sortie)}">${l.date} · ${nombre.format(l.nb)} dossiers${l.modele ? " · " + l.modele : ""}${suffixe}</option>`;
+    return `<option value="${echapper(l.sortie)}">${l.date} · ${nombre.format(l.nb)} dossiers${suffixe}</option>`;
   }).join("");
   choix.value = etat.sortie;
   await chargerResultats();
@@ -119,7 +118,6 @@ async function chargerResultats() {
   $("tb-source").textContent = `Source : ${d.dossier_source}${d.termine ? "" : " — contrôle incomplet"}`;
 
   const c = d.compte;
-  const reussis = d.nb - c["ERREUR"];
   $("k-nb").textContent = nombre.format(d.nb);
   $("k-qr").textContent = `${nombre.format(d.avec_qr)} vérifiés par QR officiel`;
   $("k-valide").textContent = nombre.format(c["VALIDÉ"]);
@@ -128,9 +126,6 @@ async function chargerResultats() {
   $("k-verif-p").textContent = pourcent(c["À VÉRIFIER"], d.nb);
   $("k-rejet").textContent = nombre.format(c["REJETÉ"]);
   $("k-rejet-p").textContent = pourcent(c["REJETÉ"], d.nb) + (c["ERREUR"] ? ` · ${c["ERREUR"]} en erreur` : "");
-  $("k-cout").textContent = dollars(d.cout);
-  $("k-cout-p").textContent = reussis ? `${dollars(d.cout_moyen, 3)} par dossier` : "";
-  $("k-cout-p").title = reussis ? `Projection : ~${nombre.format(d.projection_mois)} $ pour 3 000 dossiers par mois` : "";
   $("k-duree").textContent = d.minutes != null ? `${nombre.format(Math.round(d.minutes))} min` : "–";
   $("k-modele").textContent = d.modele ? `Modèle ${d.modele}` : "";
 
@@ -138,6 +133,7 @@ async function chargerResultats() {
   dessinerBarres($("motifs"), d.motifs, "Aucun dossier rejeté.");
   dessinerBarres($("raisons"), d.raisons, "Aucun dossier à vérifier.");
   dessinerFiltres();
+  dessinerChoixCommercial();
   dessinerTable();
 }
 
@@ -199,20 +195,56 @@ function pourquoi(i) {
   return "Conforme";
 }
 
+function dessinerChoixCommercial() {
+  const liste = etat.donnees.commerciaux || [];
+  if (etat.commercial && !liste.some(([nom]) => nom === etat.commercial)) etat.commercial = "";
+  $("choix-commercial").innerHTML = `<option value="">Tous les commerciaux</option>` +
+    liste.map(([nom, c]) => `<option value="${echapper(nom)}"${nom === etat.commercial ? " selected" : ""}>
+      ${echapper(nom)} (${c.total})</option>`).join("");
+}
+$("choix-commercial").addEventListener("change", (e) => { etat.commercial = e.target.value; dessinerTable(); });
+$("grouper").addEventListener("change", (e) => { etat.grouper = e.target.checked; dessinerTable(); });
+
+function ligneDossier(i, k) {
+  return `<tr data-k="${k}">
+      <td>${pilule(i.statut)}</td>
+      <td class="nom">${echapper(i.dossier)}</td>
+      <td class="commercial">${echapper(i.commercial)}</td>
+      <td class="pourquoi">${echapper(pourquoi(i))}</td>
+      <td>${i.qr.length ? '<span class="badge officiel">QR officiel</span>' : '<span class="badge">Lecture du scan</span>'}</td></tr>`;
+}
+
 function dessinerTable() {
   const q = etat.recherche.trim().toLowerCase();
-  const items = etat.donnees.items.filter((i) =>
-    (etat.filtre === "tous" || i.statut === etat.filtre) && (!q || i.dossier.toLowerCase().includes(q)));
+  let items = etat.donnees.items.filter((i) =>
+    (etat.filtre === "tous" || i.statut === etat.filtre)
+    && (!etat.commercial || i.commercial === etat.commercial)
+    && (!q || i.dossier.toLowerCase().includes(q) || i.commercial.toLowerCase().includes(q)));
   if (!items.length) {
     $("lignes").innerHTML = `<tr><td colspan="5" class="table-vide">Aucun dossier.</td></tr>`;
     return;
   }
-  $("lignes").innerHTML = items.map((i, k) => `<tr data-k="${k}">
-      <td>${pilule(i.statut)}</td>
-      <td class="nom">${echapper(i.dossier)}</td>
-      <td class="pourquoi">${echapper(pourquoi(i))}</td>
-      <td>${i.qr.length ? '<span class="badge officiel">QR officiel</span>' : '<span class="badge">Lecture du scan</span>'}</td>
-      <td class="num">${dollars(i.cout, 3)}</td></tr>`).join("");
+  if (!etat.grouper) {
+    $("lignes").innerHTML = items.map(ligneDossier).join("");
+  } else {
+    // regroupement : un en-tête par commercial (non identifiés en dernier)
+    const inconnu = "Commercial non identifié";
+    items = [...items].sort((a, b) => (a.commercial === inconnu) - (b.commercial === inconnu)
+      || a.commercial.localeCompare(b.commercial, "fr"));
+    let html = "", courant = null;
+    items.forEach((i, k) => {
+      if (i.commercial !== courant) {
+        courant = i.commercial;
+        const du = items.filter((x) => x.commercial === courant);
+        const n = (s) => du.filter((x) => x.statut === s).length;
+        html += `<tr class="groupe"><td colspan="5"><strong>${echapper(courant)}</strong>
+          <span>${du.length} dossier${du.length > 1 ? "s" : ""} · ${n("REJETÉ")} rejeté${n("REJETÉ") > 1 ? "s" : ""}
+          · ${n("À VÉRIFIER")} à vérifier · ${n("VALIDÉ")} validé${n("VALIDÉ") > 1 ? "s" : ""}</span></td></tr>`;
+      }
+      html += ligneDossier(i, k);
+    });
+    $("lignes").innerHTML = html;
+  }
   $("lignes").querySelectorAll("tr[data-k]").forEach((tr) =>
     tr.addEventListener("click", () => ouvrirDetail(items[Number(tr.dataset.k)])));
 }
@@ -238,13 +270,13 @@ function ouvrirDetail(i) {
   corps += bloc("Points à vérifier", "attention", i.vigilance.map((v) => `<li>${echapper(v)}</li>`));
   corps += bloc("Informations", "", i.particuliers.map((p) => `<li>${echapper(p)}</li>`));
   corps += `<div class="bloc"><h3>Données lues</h3><dl class="infos">
+      <dt>Commercial</dt><dd>${echapper(i.commercial)}</dd>
       <dt>Nom sur la CIP</dt><dd>${echapper(i.cip_nom) || "–"}</dd>
       <dt>Expiration CIP</dt><dd>${echapper(i.cip_expiration) || "non confirmée"}</dd>
       <dt>N° RCCM</dt><dd>${echapper(i.rccm) || "–"}</dd>
       <dt>N° IFU</dt><dd>${echapper(i.ifu) || "–"}</dd>
       <dt>Source RCCM/IFU</dt><dd>${sources}</dd>
-      <dt>Pages lues par Claude</dt><dd>${i.pages_envoyees} sur ${i.pages}</dd>
-      <dt>Coût</dt><dd>${dollars(i.cout, 4)}</dd></dl></div>`;
+      <dt>Pages lues par Claude</dt><dd>${i.pages_envoyees} sur ${i.pages}</dd></dl></div>`;
   $("d-corps").innerHTML = corps;
   $("voile").hidden = false;
   $("tiroir").classList.add("ouvert");
@@ -265,45 +297,50 @@ $("d-pdf").addEventListener("click", async () => {
 
 /* ---------------------------------------------------------------- nouveau contrôle */
 
-function majModele() {
-  document.querySelectorAll("#modele button").forEach((b) => b.classList.toggle("actif", b.dataset.modele === etat.modele));
-  majEstimation();
-}
-document.querySelectorAll("#modele button").forEach((b) => b.addEventListener("click", () => {
-  etat.modele = b.dataset.modele;
-  majModele();
-}));
-
 function majEstimation() {
   const c = etat.config;
   const pret = c && c.a_cle && c.moteur_ok;
-  $("lancer").disabled = !(pret && etat.nbPdf > 0) || etat.suivi?.en_cours;
+  $("lancer").disabled = !(pret && etat.nbTraites > 0) || etat.suivi?.en_cours;
   const alerte = $("alerte-lancer");
   if (c && !c.a_cle) { alerte.textContent = "Ajoutez votre clé API Claude dans Paramètres."; alerte.hidden = false; }
   else if (c && !c.moteur_ok) { alerte.textContent = "Moteur de contrôle introuvable : vérifiez Paramètres."; alerte.hidden = false; }
   else alerte.hidden = true;
-  if (!etat.nbPdf || !c) return;
-  const cout = etat.nbPdf * c.cout[etat.modele];
-  const minutes = Math.max(2, Math.round(etat.nbPdf * c.minutes));
+  if (!etat.nbTraites || !c) return;
+  const minutes = Math.max(2, Math.round(etat.nbTraites * c.minutes));
   const duree = minutes >= 90 ? `${nombre.format(Math.round(minutes / 6) / 10)} h` : `${minutes} min`;
-  $("estimation").innerHTML = `<strong>${nombre.format(etat.nbPdf)} dossiers</strong> · coût estimé
-    <strong>~${dollars(cout)}</strong> · durée estimée <strong>~${duree}</strong>`;
+  $("estimation").innerHTML = `<strong>${nombre.format(etat.nbTraites)} dossiers</strong> · lecture sur ce PC
+    <strong>~${duree}</strong>, puis réponses de Claude par lots (en général moins d'une heure,
+    24 h au plus). Idéal la nuit : laissez le PC allumé.`;
+}
+
+function afficherDossier(r) {
+  etat.dossier = r.chemin;
+  etat.nbPdf = r.nb_pdf;
+  etat.nbTraites = r.nb_traites;
+  const morceaux = [`${nombre.format(r.nb_pdf)} PDF trouvé${r.nb_pdf > 1 ? "s" : ""}`];
+  if (r.nb_deja) morceaux.push(`${nombre.format(r.nb_deja)} déjà contrôlé${r.nb_deja > 1 ? "s" : ""} (ignoré${r.nb_deja > 1 ? "s" : ""})`);
+  let html = `<strong>${echapper(r.chemin)}</strong> ${morceaux.join(" · ")}`;
+  if (r.nb_restants) html += ` · <span class="alerte-texte">${r.max} contrôlés maintenant, ${nombre.format(r.nb_restants)} au prochain lancement</span>`;
+  $("chemin").innerHTML = html;
+  if (!r.nb_pdf) $("estimation").textContent = "Aucun PDF dans ce dossier.";
+  else if (!r.nb_traites) $("estimation").textContent = "Tous les PDF de ce dossier ont déjà été contrôlés.";
+  majEstimation();
 }
 
 $("choisir").addEventListener("click", async () => {
   const r = await api().choisir_dossier();
   if (!r.chemin) return;
-  etat.dossier = r.chemin;
-  etat.nbPdf = r.nb_pdf;
-  $("chemin").innerHTML = `<strong>${echapper(r.chemin)}</strong> — ${nombre.format(r.nb_pdf)} PDF trouvé${r.nb_pdf > 1 ? "s" : ""}`;
-  if (!r.nb_pdf) $("estimation").textContent = "Aucun PDF dans ce dossier.";
-  majEstimation();
+  // le dossier choisi est réanalysé selon la case « Recontrôler »
+  afficherDossier(await api().analyser_dossier(r.chemin, $("recontroler").checked));
+});
+$("recontroler").addEventListener("change", async (e) => {
+  if (etat.dossier) afficherDossier(await api().analyser_dossier(etat.dossier, e.target.checked));
 });
 
-$("lancer").addEventListener("click", () => demarrer(etat.dossier, etat.modele, ""));
+$("lancer").addEventListener("click", () => demarrer(etat.dossier, "", $("recontroler").checked));
 
-async function demarrer(dossier, modele, reprendre) {
-  const r = await api().lancer(dossier, modele, reprendre);
+async function demarrer(dossier, reprendre, recontroler = false) {
+  const r = await api().lancer(dossier, reprendre, recontroler);
   if (!r.ok) { toast(r.message); return; }
   allerA("lancer");
   $("formulaire").hidden = true;
@@ -326,12 +363,14 @@ async function suivre() {
   $("s-fait").textContent = nombre.format(e.fait);
   $("s-total").textContent = nombre.format(e.total);
   $("s-ecoule").textContent = `${Math.floor(e.ecoule_s / 60)} min`;
-  $("s-cout").textContent = dollars(e.cout);
-  const nouveaux = Object.values(e.compte).reduce((a, b) => a + b, 0);
-  if (e.en_cours && nouveaux >= 3 && e.total > e.fait) {
-    const reste = Math.round(((e.ecoule_s / nouveaux) * (e.total - e.fait)) / 60);
-    $("s-reste").innerHTML = `Reste environ <strong>${reste >= 90 ? nombre.format(Math.round(reste / 6) / 10) + " h" : reste + " min"}</strong>`;
-  } else $("s-reste").textContent = e.en_cours ? "Lecture des premiers dossiers…" : "";
+  $("s-reste").textContent = "";
+  // deux étapes : lecture sur ce PC, puis lots envoyés à Claude (réponses par paquets)
+  const phases = [];
+  if (e.en_cours && e.lus < e.total) phases.push(`Lecture sur ce PC : ${nombre.format(e.lus)} / ${nombre.format(e.total)}`);
+  if (e.en_cours && e.lots) phases.push(`${nombre.format(e.lots)} lot${e.lots > 1 ? "s" : ""} chez Claude (${nombre.format(e.requetes)} demande${e.requetes > 1 ? "s" : ""}), réponse en général en moins d'une heure`);
+  else if (e.en_cours && e.lus >= e.total && e.total) phases.push("Envoi à Claude…");
+  $("s-phase").textContent = phases.join(" · ");
+  $("s-phase").hidden = !phases.length;
   $("s-compte").innerHTML = Object.keys(STATUTS).filter((s) => e.compte[s])
     .map((s) => `${pilule(s)} <strong>${nombre.format(e.compte[s])}</strong>`).join("&nbsp;&nbsp;");
   $("s-derniers").innerHTML = e.derniers.map((d) => `<li>${pilule(d.statut)} ${echapper(d.dossier)}</li>`).join("");
@@ -373,7 +412,7 @@ async function afficherInterrompus() {
       <button class="btn secondaire" data-k="${k}">Reprendre</button></li>`).join("");
   $("liste-interrompus").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     const l = liste[Number(b.dataset.k)];
-    demarrer(l.dossier, l.modele || etat.modele, l.sortie);
+    demarrer(l.dossier, l.sortie);
   }));
 }
 
@@ -393,7 +432,6 @@ async function afficherParametres() {
     ? `Clé enregistrée (${c.cle_apercu}). Saisissez-en une nouvelle pour la remplacer.`
     : "Aucune clé enregistrée. Collez votre clé API Claude ci-dessous.";
   $("oublier-cle").hidden = !c.a_cle;
-  document.querySelectorAll("#modele-defaut button").forEach((b) => b.classList.toggle("actif", b.dataset.modele === c.modele));
   $("carte-moteur").hidden = !!c.installe;  // application installée : moteur intégré
   $("moteur").value = c.moteur;
   $("moteur-etat").textContent = c.moteur_ok ? "Moteur trouvé (controle.py)." : "controle.py introuvable dans ce dossier.";
@@ -404,7 +442,7 @@ $("enregistrer-cle").addEventListener("click", async () => {
   if (!cle) { message("Collez d'abord une clé.", false); return; }
   const t = await api().tester_cle(cle);
   if (!t.ok) { message(`${t.message} La clé n'a pas été enregistrée.`, false); return; }
-  await api().enregistrer(cle, "", "");
+  await api().enregistrer(cle, "");
   $("cle").value = "";
   await afficherParametres();
   message("Clé vérifiée et enregistrée.", true);
@@ -420,16 +458,12 @@ $("oublier-cle").addEventListener("click", async () => {
   await afficherParametres();
   message("Clé supprimée.", true);
 });
-document.querySelectorAll("#modele-defaut button").forEach((b) => b.addEventListener("click", async () => {
-  await api().enregistrer("", b.dataset.modele, "");
-  afficherParametres();
-}));
 $("choisir-moteur").addEventListener("click", async () => {
   const chemin = await api().choisir_moteur();
   if (chemin) $("moteur").value = chemin;
 });
 $("enregistrer-moteur").addEventListener("click", async () => {
-  await api().enregistrer("", "", $("moteur").value);
+  await api().enregistrer("", $("moteur").value);
   afficherParametres();
 });
 

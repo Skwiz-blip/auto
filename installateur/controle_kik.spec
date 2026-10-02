@@ -10,6 +10,7 @@ PROJET = ICI.parent
 datas = [
     (str(PROJET / "application" / "ui"), "ui"),
     (str(PROJET / "MODELE SHAREPOINT VC.xlsx"), "."),
+    (str(PROJET / "NOM DES COMMERCIAUX.xlsx"), "."),   # liste officielle des commerciaux (BDP)
 ] + collect_data_files("rapidocr")                 # modèles PP-OCR (~31 Mo) et configuration
 binaries = collect_dynamic_libs("pyzbar") + collect_dynamic_libs("onnxruntime")
 msvcr = Path(r"C:\Windows\System32\msvcr120.dll")  # requis par libzbar
@@ -21,7 +22,7 @@ a = Analysis(
     pathex=[str(PROJET)],
     binaries=binaries,
     datas=datas,
-    hiddenimports=["controle", "sharepoint", "ocr_local", "qr_officiel", "bench_dossiers",
+    hiddenimports=["controle", "sharepoint", "ocr_local", "qr_officiel", "bench_dossiers", "registre",
                    "chemins", "referentiel", "openpyxl", "onnxruntime"]
                   + collect_submodules("webview") + collect_submodules("rapidocr"),
     excludes=["tkinter", "matplotlib", "IPython", "pytest"],

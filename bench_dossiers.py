@@ -11,12 +11,14 @@ import time
 import unicodedata
 from datetime import date, datetime
 from difflib import SequenceMatcher
+from itertools import permutations
 from pathlib import Path
 
 import anthropic
 import fitz  # PyMuPDF
 
 import chemins
+import referentiel
 
 ROOT = chemins.DONNEES
 MODEL = "claude-sonnet-4-5"
@@ -32,7 +34,18 @@ PIECE_LABELS = {
 FICHE_OBLIGATOIRES = {
     "nom_structure": "nom de la structure",
     "representant": "représentant légal",
+    "telephone": "numéro personnel",
     "ville": "ville",
+    "commercial": "« Demandé par » (commercial)",
+}
+# cases manuscrites qu'on ne « devine » pas : illisibles, elles font passer le dossier en
+# À VÉRIFIER (elles servent aux contrôles ou au fichier SharePoint)
+# (head et sous-comptes : jamais en doute, le chiffre écrit ou 1 / 0 par défaut ; commercial :
+# rattaché à la liste officielle, contrôlé à part)
+FICHE_A_LIRE = {
+    "nom_structure": "nom de la structure", "representant": "représentant légal",
+    "telephone": "numéro personnel", "secteur": "secteur d'activité", "ville": "ville",
+    "quartier": "quartier", "departement": "département",
 }
 # Champs dont un doute de lecture justifie un contrôle humain (les autres, comme le GPS
 # ou le téléphone, ne sont plus contrôlés : un doute dessus ne change rien à la décision)
@@ -68,7 +81,9 @@ SCHEMA = _obj({
         "numero", "nom", "prenoms", "nationalite", "date_naissance",
         "lieu_naissance", "enseigne", "nom_commercial", "adresse",
         "activite", "date_debut_exploitation", "date_delivrance",
-        "telephone", "document_substitut"]} | {"cachet_greffe": B}),
+        "telephone", "document_substitut", "reference_verification",
+        # dates du registre officiel (QR), remplies par le programme, pas par Claude
+        "registre_date_immatriculation", "registre_date_delivrance"]} | {"cachet_greffe": B}),
     "ifu": _obj({k: S for k in [
         "numero", "nom", "prenoms", "nom_etablissement", "categorie",
         "adresse", "rccm", "regime_fiscal", "centre_impots",
@@ -77,6 +92,8 @@ SCHEMA = _obj({
         "type", "numero", "nom", "prenoms", "date_naissance",
         "lieu_naissance", "nationalite", "date_expiration", "telephone"]} | {
         "photo_lisible": B}),
+    "contrat": _obj({"present": B, "page_signature_trouvee": B, "signe_marchand": B,
+                     "nom_signataire": S, "remarque": S}),
     "analyse": _obj({
         "plusieurs_points_de_vente": B,
         "champs_incertains": STR_LIST,
@@ -89,9 +106,11 @@ Chaque dossier est un PDF scanné. Les pièces à contrôler sont :
 - fiche : "FICHE DE CREATION MARCHAND" (en-têtes SBiN + Celtiis)
 - rccm : "EXTRAIT DU REGISTRE DU COMMERCE ET DU CREDIT MOBILIER"
 - ifu : "ATTESTATION D'IMMATRICULATION IFU" (Ministère des Finances / DGI)
-- piece_identite : CNI, CIP ("CERTIFICAT D'IDENTIFICATION PERSONNELLE") ou passeport
-Le dossier contient aussi le contrat Celtiis Cash : il n'est pas à contrôler, sers-t'en
-seulement pour savoir s'il y a plusieurs points marchands (Annexe 1).
+- piece_identite : toute pièce d'identité officielle : CIP ("CERTIFICAT D'IDENTIFICATION
+  PERSONNELLE"), CNI, carte d'identité CEDEAO, passeport, permis de conduire, carte consulaire…
+- contrat : contrat de paiement Celtiis Cash. On ne t'en montre en général que la page de
+  signature (« FAIT EN TROIS (03) EXEMPLAIRES ORIGINAUX… POUR LA SBIN… POUR <marchand> ») :
+  contrôle seulement la signature du marchand.
 
 Identifie sur quelles pages (numérotées à partir de 1) se trouve chaque pièce, puis extrais
 les champs demandés en recopiant exactement ce qui est écrit, sans corriger l'orthographe :
@@ -111,21 +130,22 @@ Règles de saisie :
   JAMAIS les lignes « Père » ou « Mère » de la rubrique Filiation. La carte est souvent
   scannée de travers : repère bien les libellés.
 - fiche (FICHE DE CREATION MARCHAND - CELTIIS CASH, manuscrite) : nom_structure = « Nom de la
-  structure » ; secteur = « Secteur d'activité » (s'il est peu lisible, donne l'activité la
-  plus probable, ex. « Commerce général », « Transfert d'argent ») ; representant = « Nom du
-  représentant légal » ; telephone = « Numéro personnel » ; carre_maison_ilot = « Carré /
-  Maison / Ilot » ; ville, quartier, departement = « Ville », « Quartier », « Département » ;
-  nombre_head = « Nombre de Head » ; nombre_sous_comptes = « Nombre de sous comptes » ;
+  structure » ; secteur = « Secteur d'activité » ; representant = « Nom du représentant
+  légal » ; telephone = « Numéro personnel » ; ville, quartier, departement = « Ville », « Quartier », « Département » ;
+  nombre_head = « Nombre de Head » ; nombre_sous_comptes = « Nombre de sous comptes » (pour
+  ces deux cases : le chiffre auquel l'écriture ressemble le plus, jamais « ? ») ;
   commercial = nom écrit après « Demandé par » ; date_demande = « Date et signature ».
-  Sur la fiche, recopie tout ce que tu arrives à lire, même partiellement, en mettant « ? »
-  à la place de chaque lettre ou chiffre illisible. Laisse "" uniquement si la case est
+  Recopie lettre par lettre ce qui est écrit, fautes comprises : le nom de la structure et
+  celui du représentant seront comparés au RCCM, une faute du commercial doit rester visible.
+  Ne devine JAMAIS : chaque lettre ou chiffre que tu ne lis pas avec certitude est remplacé
+  par « ? » (ex. « AGO?A »), et la case est ajoutée à champs_incertains. Ne complète pas un
+  mot d'après le sens ou d'après une autre pièce. Laisse "" uniquement si la case est
   vraiment vide sur le formulaire.
 - rccm.telephone / piece_identite.telephone : numéro imprimé sur le RCCM (« Tel : ») et sur la
   CIP (« Numéro de téléphone »), tel qu'écrit.
 - Dates au format AAAA-MM-JJ quand elles sont lisibles, sinon "". Exception :
   piece_identite.date_expiration se recopie TELLE QU'IMPRIMÉE, au format JJ/MM/AAAA (ex.
   « Expire le : 08/11/2026 » -> "08/11/2026") : le premier nombre est le jour.
-- Coordonnées GPS : recopie les nombres tels qu'écrits (point décimal).
 - Booléens de signature / cachet : true seulement si l'élément est visible sur le scan.
 - piece_identite.photo_lisible : true seulement si la photo est présente et que le visage est
   reconnaissable (pas noirci, pas effacé, pas coupé).
@@ -139,15 +159,28 @@ Règles de saisie :
 - rccm : seulement un extrait du registre du commerce. Une association / ONG fournit un
   récépissé de déclaration : mets pieces.rccm.presente = false et rccm.document_substitut =
   "Récépissé de déclaration d'ONG".
+- rccm.cachet_greffe : true seulement si un cachet (tampon) du greffe est visible sur une page
+  du RCCM. Les extraits électroniques du Ministère de la Justice n'ont pas de cachet : ils
+  portent « Vérifiez la conformité de ce document » et un « Numéro de référence » (ex. « IHAP
+  QXZL CEXR ZQKT ») à recopier dans rccm.reference_verification ("" s'il n'y en a pas).
+  rccm.date_delivrance : date de « certifié conforme et délivré le … », souvent sur la 2e page
+  du RCCM ; si cette ligne est restée vide, la date du tampon de certification du greffe
+  (« Vu certifié par le Greffier en Chef… Ce 07 AOÛT 2026 ») ; "" si aucune date n'y figure.
+- contrat : page_signature_trouvee = true si la page du bloc de signatures (« FAIT EN TROIS
+  (03) EXEMPLAIRES ORIGINAUX… POUR LA SBIN… POUR <marchand> ») est fournie ; signe_marchand =
+  true seulement si une signature manuscrite figure sous « POUR <marchand> » (la signature de
+  la SBIN n'est pas exigée) ; nom_signataire = nom écrit sous cette signature. Le champ
+  "present" est rempli par le programme : laisse-le à false.
 - "lisible" = false si la pièce est floue, coupée ou trop sombre au point de gêner la lecture
-  d'un champ important ; précise le problème dans "remarque".
+  d'un champ important ; précise le problème dans "remarque". Toute "remarque" reste "" s'il
+  n'y a rien d'anormal ; sinon quelques mots.
 - Dans les numéros RCCM, le code du greffe désigne la ville (ex : ABC = Abomey-Calavi,
   COT = Cotonou).
 - plusieurs_points_de_vente : true si le dossier indique plus d'un point marchand.
 - champs_incertains : liste des champs que tu n'as pas pu lire avec certitude (écriture peu
   lisible, chiffre ambigu, zone masquée ou coupée). Mieux vaut signaler un doute que deviner :
   ces champs seront revus par un humain. Exemple : "piece_identite.date_expiration".
-- observations : anomalies notables sur les 4 pièces, en phrases courtes.
+- observations : au plus 3 anomalies notables, en quelques mots chacune.
 
 Réponds uniquement avec un objet JSON (sans texte autour) ayant exactement cette structure :
 """
@@ -345,18 +378,61 @@ def comparer_noms(ref: list[str], other: list[str]) -> str:
     return compare_names(ref, other)
 
 
+def _distance(a: str, b: str) -> int:
+    """Distance d'édition : lettres à changer, ajouter ou retirer pour passer de a à b."""
+    precedente = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        courante = [i]
+        for j, cb in enumerate(b, 1):
+            courante.append(min(precedente[j] + 1, courante[j - 1] + 1,
+                                precedente[j - 1] + (ca != cb)))
+        precedente = courante
+    return precedente[-1]
+
+
+def comparer_strict(ref: list[str], other: list[str]) -> str:
+    """Règle stricte KIK (octobre 2026) : 'identique' (seuls l'ordre des mots, les espaces, les
+    accents ou la casse diffèrent), 'lecture' (un seul caractère d'écart : faute ou erreur de
+    lecture, un humain tranche) ou 'different' (prénom en moins, initiale, plusieurs lettres)."""
+    ref, other = list(dict.fromkeys(ref)), list(dict.fromkeys(other))
+    if "".join(sorted(ref)) == "".join(sorted(other)) or "".join(ref) == "".join(other):
+        return "identique"
+    ecart = min(_distance("".join(ref), "".join(other)),
+                _distance("".join(sorted(ref)), "".join(sorted(other))))
+    if len(ref) == len(other) <= 6:
+        # mots appariés au mieux : « ROCK MARC » / « MARC ROCH »
+        ecart = min(ecart, min(sum(_distance(a, b) for a, b in zip(ref, p))
+                               for p in permutations(other)))
+    return "lecture" if ecart <= 1 else "different"
+
+
+def sans_forme(v: str) -> str:
+    """Nom de structure sans sa forme juridique : « ETS AGS PROD » -> « AGSPROD »."""
+    return re.sub(FORMES_JURIDIQUES, "", _key(v))
+
+
+def comparer_structures(a: str, b: str) -> str:
+    """Même règle que comparer_strict pour deux noms de structure (espaces, accents, casse et
+    forme juridique mis à part)."""
+    x, y = sans_forme(a), sans_forme(b)
+    if x == y:
+        return "identique"
+    return "lecture" if _distance(x, y) <= 1 else "different"
+
+
 def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
                 sources_officielles: set[str] = frozenset({"rccm", "ifu"}),
                 photo_bloquante: bool = True) -> dict:
-    """Règles KIK (option B) : tout défaut constaté sur le document est rejeté avec l'un des
-    sept motifs ; « À VÉRIFIER » ne sert que lorsque deux lectures se contredisent ou pour un
-    écart de nom mineur (une lettre, un prénom en moins). La fiche manuscrite mal lue ne
-    rejette jamais : seule une case obligatoire vide rend le dossier incomplet.
+    """Règles KIK, version stricte (octobre 2026) : tout défaut constaté rejette le dossier avec
+    l'un des sept motifs, même un petit écart de nom. « À VÉRIFIER » est réservé à ce que la
+    machine ne peut pas trancher seule : écriture illisible (on ne devine pas), lectures qui se
+    contredisent, un seul caractère d'écart (faute du commercial ou erreur de lecture ?).
     sources_officielles : pièces dont les valeurs viennent du QR de l'État (font foi).
     (photo_bloquante : conservé pour compatibilité, la photo illisible rejette toujours.)"""
     bloquants, vigilance, particuliers = [], [], []
     pieces, fiche, rccm, ifu, pid, analyse = (
         d["pieces"], d["fiche"], d["rccm"], d["ifu"], d["piece_identite"], d["analyse"])
+    contrat = d.get("contrat") or {}
     incertains = [c.lower() for c in analyse["champs_incertains"]]
 
     def rejet(motif: str, detail: str = ""):
@@ -364,6 +440,23 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
 
     def douteux(section: str, *champs: str) -> bool:
         return any(c.startswith(f"{section}.{ch}") for c in incertains for ch in champs)
+
+    def lisible(valeur: str, section: str, champ: str) -> bool:
+        """Écrit, et lu sans doute : pas de « ? » ; pour une pièce imprimée, pas signalé
+        incertain non plus (sur la fiche, seul le « ? » compte : le modèle signale des doutes
+        sur des cases pourtant bien lues)."""
+        return (bool(_key(valeur)) and "?" not in valeur
+                and (section == "fiche" or not douteux(section, champ)))
+
+    def ecart(verdict: str, quoi: str, sur: bool = True, motif: str = M_RCCM_NON_CONFORME):
+        """Un seul caractère d'écart, ou lecture incertaine : à vérifier ; sinon rejet."""
+        if verdict == "lecture":
+            vigilance.append(f"{quoi[0].upper() + quoi[1:]} : un seul caractère d'écart (faute "
+                             "ou erreur de lecture, à confirmer)")
+        elif verdict == "different" and not sur:
+            vigilance.append(f"{quoi[0].upper() + quoi[1:]} (lecture incertaine, à confirmer)")
+        elif verdict == "different":
+            rejet(motif, quoi)
 
     # ---- Pièces présentes et lisibles --------------------------------------------------
     # carte APIEx à la place de l'attestation IFU : acceptée si le numéro IFU y figure
@@ -386,7 +479,9 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
         elif not pieces[p]["lisible"] and p not in sources_officielles:
             detail = f"{PIECE_LABELS[p]} : {pieces[p]['remarque']}".rstrip(" :")
             if p == "fiche":
-                particuliers.append(f"Fiche difficile à lire : {pieces[p]['remarque']}")
+                # écriture manuscrite : on ne force pas la lecture, un humain la fait
+                vigilance.append(f"Fiche manuscrite difficile à lire : {pieces[p]['remarque']}"
+                                 .rstrip(" :"))
             elif p == "piece_identite" and pid["nom"] and _date(pid["date_expiration"]):
                 # jugée floue alors que nom et date ont été lus : les deux constats se
                 # contredisent, un humain tranche
@@ -395,7 +490,7 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
             else:
                 rejet(M_RCCM_ILLISIBLE if p == "rccm" else M_FLOUE, detail)
 
-    # ---- Fiche : cases obligatoires vides (une écriture mal lue ne rejette pas) -------------
+    # ---- Fiche : cases obligatoires vides ----------------------------------------------------
     if pieces["fiche"]["presente"]:
         # une case signalée comme mal lue n'est pas vide : elle ne rend pas le dossier incomplet
         vides = [label for k, label in FICHE_OBLIGATOIRES.items()
@@ -403,39 +498,70 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
         if vides:
             rejet(M_INCOMPLET, "fiche non remplie : " + ", ".join(vides))
 
-    # ---- Nom du PDF ----------------------------------------------------------------------
-    def sans_forme(v):
-        return re.sub(FORMES_JURIDIQUES, "", _key(v))
+        # ---- Fiche : écriture illisible (« ? »), jamais devinée --------------------------
+        illisibles = []
+        commune_lue = referentiel.commune(fiche["ville"].replace("?", ""))
+        for k, label in FICHE_A_LIRE.items():
+            v = fiche[k].strip()
+            if "?" not in v:
+                continue
+            net = v.replace("?", "")
+            # rattachée à une liste fermée (77 communes, départements de KIK) : lecture sûre
+            if k == "ville" and commune_lue:
+                continue
+            if k == "departement" and referentiel.departement(net, commune_lue,
+                                                               fiche["commercial"]):
+                continue
+            illisibles.append(f"{label} (« {v} »)")
+        if illisibles:
+            vigilance.append("Fiche manuscrite illisible : " + ", ".join(illisibles))
+        # commercial : seuls ceux de la liste officielle (NOM DES COMMERCIAUX.xlsx)
+        if fiche["commercial"].strip() and not referentiel.commercial(fiche["commercial"]):
+            vigilance.append(f"Commercial « {fiche['commercial']} » non reconnu dans la liste "
+                             "officielle des commerciaux")
 
-    noms_imprimes = [v for v in (rccm["enseigne"], rccm["nom_commercial"],
-                                 ifu["nom_etablissement"]) if nom_valide(v)]
-    imprimes = {sans_forme(v) for v in noms_imprimes if sans_forme(v)}
-    attendu = (noms_imprimes[0] if noms_imprimes else fiche["nom_structure"])
-    fichier = sans_forme(nettoyer_nom_fichier(nom_fichier))
+    # ---- Nom commercial : nom du PDF et nom de la structure sur la fiche --------------------
+    noms_rccm = [v for v in (rccm["enseigne"], rccm["nom_commercial"]) if nom_valide(v)]
+    noms_ifu = [ifu["nom_etablissement"]] if nom_valide(ifu["nom_etablissement"]) else []
+    noms_imprimes = list(dict.fromkeys(noms_rccm + noms_ifu))
+    # registre officiel (QR) : fait foi ; lecture du scan : sûre sauf doute signalé
+    officiel = bool((noms_rccm and "rccm" in sources_officielles)
+                    or (noms_ifu and "ifu" in sources_officielles))
+    sur = officiel or not (douteux("rccm", "enseigne", "nom_commercial")
+                           or douteux("ifu", "nom_etablissement")
+                           or any("?" in n for n in noms_imprimes))
+    attendu = " / ".join(noms_imprimes)
+    fichier = nettoyer_nom_fichier(nom_fichier)
     if COPIE.search(nom_fichier):
         vigilance.append(f"Doublon possible : fichier « {nom_fichier} » nommé comme une copie")
-    mots_fichier = set(_name_tokens(nettoyer_nom_fichier(nom_fichier)))
-    meme_mots = any(set(_name_tokens(v)) == mots_fichier for v in noms_imprimes)
-    if imprimes and fichier not in imprimes and not meme_mots:
-        contenu = any(len(n) >= 4 and (n in fichier or fichier in n) for n in imprimes)
-        proche = max(SequenceMatcher(None, fichier, n).ratio() for n in imprimes)
-        # mots en commun : « MARCO ET FILS » / « MARCO GRACE ET FILS »
-        communs = max(len(mots_fichier & set(_name_tokens(v))) / max(len(mots_fichier), 1)
-                      for v in noms_imprimes)
-        if contenu or proche >= 0.75 or communs >= 0.5:
-            vigilance.append(f"Nom du PDF « {nom_fichier} » proche de la structure "
-                             f"« {attendu} » (une lettre ou un mot d'écart)")
-        elif {"rccm", "ifu"} & set(sources_officielles):
-            # rejet seulement contre un nom sûr, celui du registre officiel (QR)
-            rejet(M_NOM_PDF, f"fichier « {nom_fichier} », structure « {attendu} »")
-        else:
-            vigilance.append(f"Nom du PDF « {nom_fichier} » différent de l'enseigne lue "
-                             f"« {attendu} » (lecture non confirmée par le registre officiel)")
-    elif not imprimes and fiche["nom_structure"].strip():
-        manuscrit = sans_forme(fiche["nom_structure"].replace("?", ""))
-        if manuscrit and SequenceMatcher(None, fichier, manuscrit).ratio() < 0.6:
-            vigilance.append(f"Nom du PDF « {nom_fichier} » à comparer au nom écrit sur la "
-                             f"fiche « {fiche['nom_structure']} » (aucun nom imprimé)")
+    if noms_imprimes:
+        verdicts = {comparer_structures(fichier, n) for n in noms_imprimes}
+        if "identique" not in verdicts:
+            detail = f"fichier « {nom_fichier} », nom commercial « {attendu} »"
+            if not sur:
+                vigilance.append(f"Nom du PDF différent du nom commercial lu sur le scan, "
+                                 f"lecture à confirmer ({detail})")
+            elif "lecture" in verdicts and not officiel:
+                vigilance.append(f"Nom du PDF : un seul caractère d'écart avec le nom commercial "
+                                 f"({detail}) : faute ou erreur de lecture, à confirmer")
+            else:
+                rejet(M_NOM_PDF, detail)
+        structure = fiche["nom_structure"].strip()
+        if pieces["fiche"]["presente"] and lisible(structure, "fiche", "nom_structure"):
+            verdicts = {comparer_structures(structure, n) for n in noms_imprimes}
+            if "identique" not in verdicts:
+                ecart("lecture" if "lecture" in verdicts else "different",
+                      f"nom de la structure sur la fiche (« {structure} ») différent du nom "
+                      f"commercial du RCCM (« {attendu} »)", sur)
+    else:
+        # pas de nom commercial imprimé (enseigne « NEANT ») : nom de la fiche ou du promoteur
+        candidats = [v for v in (fiche["nom_structure"], f"{rccm['nom']} {rccm['prenoms']}",
+                                 f"{pid['nom']} {pid['prenoms']}") if lisible(v, "-", "-")]
+        if not any(comparer_structures(fichier, v) == "identique"
+                   or comparer_strict(_name_tokens(fichier), _name_tokens(v)) == "identique"
+                   for v in candidats):
+            vigilance.append(f"Pas de nom commercial sur le RCCM : nom du PDF « {nom_fichier} » "
+                             f"à comparer à la fiche (« {fiche['nom_structure']} »)")
 
     # ---- Pièce d'identité : date d'expiration et photo --------------------------------------
     if pieces["piece_identite"]["presente"]:
@@ -456,7 +582,7 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
             else:
                 rejet(M_PHOTO, "photo absente ou visage non identifiable")
 
-    # ---- RCCM ------------------------------------------------------------------------------
+    # ---- RCCM : numéro, cachet du greffe, date de délivrance --------------------------------
     if pieces["rccm"]["presente"] and pieces["rccm"]["lisible"]:
         if not _norm(rccm["numero"]) and _rccm(ifu["rccm"]):
             rccm["numero"] = ifu["rccm"]  # repris de l'IFU, qui cite le même registre
@@ -467,18 +593,42 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
                 rejet(M_RCCM_ILLISIBLE, "numéro RCCM illisible")
         elif not re.search(r"RB/[A-Z]{2,4}/\d{2}[A-Z]\d+", rccm["numero"].upper().replace(" ", "")):
             particuliers.append(f"Format du numéro RCCM inhabituel ({rccm['numero']})")
+        if not rccm["cachet_greffe"] and _key(rccm.get("reference_verification", "")):
+            # extrait électronique : pas de tampon, authentifié par son numéro de référence
+            particuliers.append(f"RCCM électronique, numéro de vérification "
+                                f"{rccm['reference_verification']}")
+        elif not rccm["cachet_greffe"]:
+            if douteux("rccm", "cachet"):
+                vigilance.append("Cachet du greffe sur le RCCM à confirmer")
+            else:
+                rejet(M_RCCM_NON_CONFORME, "cachet du greffe absent du RCCM")
+        papier, registre = _date(rccm["date_delivrance"]), _date(rccm["registre_date_delivrance"])
+        if papier and registre and papier != registre:
+            # le QR renvoie au document lui-même : ses dates doivent être celles du papier
+            vigilance.append(f"Date de délivrance lue sur le RCCM ({papier:%d/%m/%Y}) différente "
+                             f"du registre officiel ({registre:%d/%m/%Y}) : document modifié ou "
+                             "erreur de lecture, à confirmer")
+        # date établie par le registre officiel (QR) : présente même si le papier est peu lisible
+        if not registre and not re.search(r"(19|20)\d\d", rccm["date_delivrance"]):
+            if douteux("rccm", "date_delivrance"):
+                vigilance.append("Date de délivrance du RCCM à confirmer")
+            else:
+                rejet(M_RCCM_NON_CONFORME, "date de délivrance absente du RCCM (2e page "
+                                           "manquante ?)")
 
-    # ---- Noms : RCCM et IFU comparés à la pièce d'identité -------------------------------
+    # ---- Noms : RCCM, IFU et fiche comparés à la pièce d'identité -------------------------
     ref = _name_tokens(pid["nom"], pid["prenoms"])
     ref_txt = f"{pid['nom']} {pid['prenoms']}".strip()
     if pieces["piece_identite"]["presente"] and not ref:
         rejet(M_FLOUE, "nom illisible sur la pièce d'identité")
     elif ref:
-        if douteux("piece_identite", "nom", "prenoms"):
+        pid_sur = not douteux("piece_identite", "nom", "prenoms")
+        if not pid_sur:
             vigilance.append(f"Nom sur la pièce d'identité lu avec doute ({ref_txt})")
         etablissements = {_key(v) for v in (rccm["enseigne"], rccm["nom_commercial"]) if _key(v)}
         rccm_lie = ((bool(_rccm(ifu["rccm"])) and _rccm(rccm["numero"]) == _rccm(ifu["rccm"]))
                     or _key(ifu["nom_etablissement"]) in etablissements)
+        promoteur, promoteur_txt = ref, ref_txt  # à défaut de RCCM : la pièce d'identité
         for cle, label, present, nom, prenoms in [
             ("rccm", "le RCCM", pieces["rccm"]["presente"], rccm["nom"], rccm["prenoms"]),
             ("ifu", "l'IFU", pieces["ifu"]["presente"] or bool(substitut_ifu),
@@ -510,20 +660,20 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
                 vigilance.append(f"Civilité « {' '.join(civilite)} » ajoutée au nom sur {label} "
                                  f"({other_txt}) ; pièce d'identité ({ref_txt})")
                 other = [t for t in other if t not in CIVILITES]
-            verdict = comparer_noms(ref, other)
-            if verdict == "different":
-                rejet(M_RCCM_NON_CONFORME, f"nom sur {label} ({other_txt}) différent de la "
-                                           f"pièce d'identité ({ref_txt})")
-            elif verdict == "proche":
-                vigilance.append(f"Nom sur {label} ({other_txt}) légèrement différent de la "
-                                 f"pièce d'identité ({ref_txt})")
+            if cle == "rccm":
+                promoteur, promoteur_txt = other, other_txt
+            lu_sur = pid_sur and (cle in sources_officielles or not douteux(cle, "nom", "prenoms"))
+            ecart(comparer_strict(ref, other),
+                  f"nom sur {label} ({other_txt}) différent de la pièce d'identité ({ref_txt})",
+                  lu_sur)
             if cle not in sources_officielles and douteux(cle, "nom", "prenoms"):
                 vigilance.append(f"Nom sur {label} lu avec doute ({other_txt})")
-        # le représentant écrit à la main n'est qu'une information
-        rep = _name_tokens(fiche["representant"].replace("?", ""))
-        if rep and comparer_noms(ref, rep) == "different":
-            particuliers.append(f"Représentant écrit sur la fiche ({fiche['representant']}) "
-                                f"différent de la pièce d'identité ({ref_txt})")
+        # le représentant écrit sur la fiche doit être le promoteur, bien écrit
+        representant = fiche["representant"].strip()
+        if pieces["fiche"]["presente"] and lisible(representant, "fiche", "representant"):
+            ecart(comparer_strict(promoteur, _name_tokens(representant)),
+                  f"représentant écrit sur la fiche ({representant}) différent du promoteur "
+                  f"({promoteur_txt})")
 
     # ---- Numéro RCCM cité par l'IFU ------------------------------------------------------
     motif_rccm = re.compile(r"RB\s*/?\s*[A-Z]{2,4}\s*/?\s*\d{2}\s*[A-Z]\s*\d+")
@@ -535,6 +685,26 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
             rejet(M_RCCM_NON_CONFORME, message)
         else:
             vigilance.append(message[0].upper() + message[1:])
+
+    # ---- Contrat : signé par le marchand -----------------------------------------------------
+    if not (contrat.get("present") or contrat.get("page_signature_trouvee")):
+        if "non identifi" in contrat.get("remarque", ""):
+            # pages non identifiées : le contrat y est peut-être
+            vigilance.append(f"Contrat non trouvé ({contrat['remarque']})")
+        else:
+            rejet(M_INCOMPLET, "contrat Celtiis Cash absent")
+    elif not contrat.get("page_signature_trouvee"):
+        if "page de signature absente" in contrat.get("remarque", ""):
+            # toutes les pages du contrat comparées à l'exemplaire, aucune ne lui ressemble
+            rejet(M_INCOMPLET, f"contrat incomplet, {contrat['remarque']}")
+        else:
+            vigilance.append("Page de signature du contrat non reconnue : signature du "
+                             "marchand à contrôler")
+    elif not contrat.get("signe_marchand"):
+        if douteux("contrat", "signe"):
+            vigilance.append("Signature du marchand sur le contrat à confirmer")
+        else:
+            rejet(M_INCOMPLET, "contrat non signé par le marchand")
 
     if analyse["plusieurs_points_de_vente"]:
         particuliers.append("Points de vente multiples")

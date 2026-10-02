@@ -60,8 +60,34 @@ MARQUEURS = {
                        "CERTIFICAT D IDENTIFICATION PERSONNELLE", "IDENTIFICATION PERSONNELLE",
                        "NUMERO PERSONNEL D'IDENTIFICATION", "CARTE NATIONALE D'IDENTITE",
                        "CARTE D'IDENTITE CEDEAO", "IDENTITE CEDEAO", "ECOWAS IDENTITY",
-                       "PASSPORT"],
+                       "PASSPORT", "PERMIS DE CONDUIRE", "DRIVING LICENCE",
+                       "CARTE CONSULAIRE", "CARTE D'ELECTEUR"],
 }
+# Page des signatures du contrat Celtiis Cash (« FAIT EN TROIS (03) EXEMPLAIRES ORIGINAUX…
+# POUR LA SBIN… POUR <marchand> », puis l'annexe 1). Elle est reconnue par comparaison avec un
+# exemplaire : les mots imprimés communs aux pages de signature de 4 dossiers réels (AGS PROD,
+# ABDOUL TAYLOR, BERAGA, LE BÉLIER DES AFFAIRES). Mesure sur ces dossiers : la page de
+# signature ressemble au modèle à 74-98 %, les autres pages du contrat à 30 % au plus.
+MODELE_SIGNATURE = frozenset("""
+    ACCORD ACTIVITE ADMINISTRATEURS ADRESSE AETE ANNEXE APPROPRIEE ARCHITECTURE ARRETES
+    ARRETS ASSOCIE CHACUNE CHAQUE COMITE COMMUNICATION COMPTES CONCERNANT CONNEXION CONTRAT
+    COTONOU COURS COUT DANS DEFAUT DEHORS DELAI DEPARTEMENT DEVRONT DIFFERERD DIRECTEUR
+    DISPOSITIF DISPOSITION DONT ECHEANT EFFECTUER ELLE ENGAGE ENTRE ENTRETIEN ENVIRONNEMENT
+    ETRE EVOLUTIONS EVOLUTIVE EXEMPLAIRES FAIRE FAIT FICHE FIXEE FOURNIR GENERAL GENERALE
+    GERANT GESTION HEURES IDENTIFICATION IMPACTANT INCIDENTS INDICATEURS INFORMATIONS
+    INFORMATIQUE INTERVENTION JOUR JURIDIQUE MAINTENANCE MARCHAND MARCHANDS MESURE MODES
+    NATURE NDIAYE NECESSAIRES NOMBRE NOTAMMENT OBJET OMAR ORGANISATIONNEL ORIGINAUX
+    PARTENAIRE PARTIE PARTIES PARTIR PASSEPORT PILOTAGE PLAGE PLAIGNANTE PLANIFICATION PLUS
+    POINTS POSSIBLE POUR PRIORITAIRE PROCEDER PROCES PRODUCTION QUALITE QUARTIER REALISES
+    RECETTES REGLEMENT REMIS REVERSEMENT SAISIRA SBIN SERONT SERVICE SOCIETE SUIVANTS SUIVI
+    SURVEILLANCE TEMPS TEST TOUTE TRAITEMENT TRIBUNAL TROIS UTILISATION VALIDE VALIDEE
+    VERBAL ZONE
+""".split())
+SEUIL_SIGNATURE = 0.45  # au-dessus : c'est la page de signature
+SEUIL_DOUTE = 0.30      # entre les deux : page douteuse, montrée à Claude qui tranche
+# places habituelles de cette page dans le contrat selon l'ordre du scan (6e ou 2e page) : lues
+# en premier, pour s'arrêter vite ; la reconnaissance, elle, se fait sur le contenu
+ORDRE_SIGNATURE = (5, 1, 4, 2, 6, 3, 0)
 # pièces qui remplacent l'IFU ou le RCCM (règles KIK)
 SUBSTITUTS_IFU = ("apiex", "cnss")
 SUBSTITUTS_RCCM = ("ong",)
@@ -206,6 +232,38 @@ def identifier_pages(doc) -> tuple[dict, dict]:
     return types, angles
 
 
+def ressemblance_signature(texte: str) -> float:
+    """Part des mots du modèle de page de signature présents dans le texte lu (0 à 1)."""
+    mots = set(re.findall(r"[A-Z]{4,}", _sans_accents(texte)))
+    return len(MODELE_SIGNATURE & mots) / len(MODELE_SIGNATURE)
+
+
+def page_signature(doc, types: dict) -> dict:
+    """Page de signature du contrat, reconnue en local par comparaison avec l'exemplaire.
+
+    Renvoie {"page": n ou 0, "douteuse": n ou 0, "score": meilleure ressemblance, "lues": nombre
+    de pages comparées}. Toutes les pages du contrat (et les pages non identifiées) sont
+    comparées au besoin ; on s'arrête dès que l'une ressemble nettement au modèle."""
+    contrat = [i for i, t in sorted(types.items()) if t == "contrat"]
+    candidates = contrat + [i for i, t in sorted(types.items()) if t == "inconnu"]
+
+    def ordre(i):
+        k = contrat.index(i) if i in contrat else 99
+        return ORDRE_SIGNATURE.index(k) if k in ORDRE_SIGNATURE else 50 + k
+
+    meilleure, score_max, lues = 0, 0.0, 0
+    for i in sorted(candidates, key=ordre):
+        texte, _, _ = _ocr(_image(doc[i - 1], 1000))
+        lues += 1
+        score = ressemblance_signature(texte)
+        if score > score_max:
+            meilleure, score_max = i, score
+        if score >= SEUIL_SIGNATURE:
+            return {"page": i, "douteuse": 0, "score": round(score, 2), "lues": lues}
+    return {"page": 0, "douteuse": meilleure if score_max >= SEUIL_DOUTE else 0,
+            "score": round(score_max, 2), "lues": lues}
+
+
 def lire_page(page, largeur: int = 2200, angle: int = 0) -> tuple[str, float]:
     """Texte complet d'une page + confiance moyenne de l'OCR (0-100)."""
     texte, conf, _ = _ocr(_image(page, largeur, angle))
@@ -278,12 +336,16 @@ def lire_dossier(pdf: Path, conf_min: float = 75.0) -> dict:
             if absents or sum(confs) / len(confs) < conf_min:
                 res["manques"].append(f"{piece}: {', '.join(absents) or 'confiance faible'}")
                 res["pages_a_envoyer"] += pages
-        # Claude reçoit les 4 pièces à contrôler et les pages non identifiées ; le contrat,
-        # qui pèse 7 à 8 pages et n'est plus contrôlé, reste en local.
+        # Claude reçoit les 4 pièces à contrôler et les pages non identifiées ; du contrat
+        # (7 à 8 pages), seule la page des signatures lui est montrée (voir controle.py).
         res["pages_a_envoyer"] += [i for i, t in types.items() if t != "contrat"]
         inconnues = [i for i, t in types.items() if t == "inconnu"]
         if inconnues:
             res["manques"].append(f"pages non identifiées : {inconnues}")
+        # contrat : seule la page des signatures sera montrée à Claude
+        res["signature"] = page_signature(doc, types)
+        if any(t == "contrat" for t in types.values()) and not res["signature"]["page"]:
+            res["manques"].append("page de signature du contrat non reconnue")
         for piece in ("rccm", "ifu", "piece_identite"):
             if not [i for i, t in types.items() if t == piece]:
                 manque = piece

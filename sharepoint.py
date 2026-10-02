@@ -26,7 +26,7 @@ A_COMPLETER = PatternFill("solid", fgColor="FFD8A8")  # orange clair
 PRINCIPAL_MAX, SOUS_COMPTES_MAX = 10, 20  # au-delà : chiffre mal lu, valeur par défaut
 
 
-def ligne(journal: dict, date_transmission: str) -> list[str]:
+def ligne(journal: dict, date_transmission: str) -> list:
     """Imprimé d'abord (RCCM, IFU), manuscrit ensuite : l'écriture de la fiche est la source la
     moins sûre. Ville et département sont ramenés au référentiel des communes du Bénin."""
     # conform : complète les champs absents des résultats plus anciens (ex. nombre_head)
@@ -38,23 +38,24 @@ def ligne(journal: dict, date_transmission: str) -> list[str]:
     # promoteur : nom et prénoms du RCCM (à défaut, ceux de la pièce d'identité)
     nom = (rccm["nom"] or pid["nom"]).strip().upper()
     prenoms = (rccm["prenoms"] or pid["prenoms"]).strip().upper()
-    # contact : numéro imprimé sur le RCCM, puis l'IFU, puis celui écrit sur la fiche
-    contact = (numero_benin(rccm["telephone"]) or numero_benin(pid["telephone"])
-               or numero_benin(ifu["telephone"]) or numero_benin(fiche["telephone"])
-               or re.sub(r"[^\d?+]", "", fiche["telephone"]))
+    # contact : numéro imprimé sur le RCCM, puis la CIP, l'IFU, celui écrit sur la fiche ;
+    # au format KIK « 229 » + numéro (2290197155835)
+    numero = (numero_benin(rccm["telephone"]) or numero_benin(pid["telephone"])
+              or numero_benin(ifu["telephone"]) or numero_benin(fiche["telephone"]))
+    contact = ("229" + numero) if numero else re.sub(r"[^\d?]", "", fiche["telephone"])
     ville = referentiel.commune(fiche["ville"])
     return [
         date_transmission,                                                   # A
         structure,                                                           # B STRUCTURE
-        referentiel.nombre_comptes(fiche["nombre_head"], "01", PRINCIPAL_MAX),          # C
-        referentiel.nombre_comptes(fiche["nombre_sous_comptes"], "00", SOUS_COMPTES_MAX),  # D
+        referentiel.nombre_comptes(fiche["nombre_head"], 1, PRINCIPAL_MAX),             # C
+        referentiel.nombre_comptes(fiche["nombre_sous_comptes"], 0, SOUS_COMPTES_MAX),  # D
         nom, prenoms, contact,                                               # E-G PROMOTEUR
         nom, prenoms, contact,                                               # H-J GESTIONNAIRE
         fiche["secteur"].strip(),                                            # K SECTEUR
-        referentiel.departement(fiche["departement"], ville) or fiche["departement"].strip(),
+        referentiel.departement(fiche["departement"], ville, fiche["commercial"]),       # L
         ville or fiche["ville"].strip(),                                     # M VILLE/COMMUNE
         fiche["quartier"].strip(),                                           # N SITUATION GEO.
-        referentiel.commercial(fiche["commercial"]),                          # O COMMERCIAL
+        referentiel.commercial(fiche["commercial"]),  # O : nom de la liste officielle, ou vide
         "",                                                                  # P (laissé vide)
     ]
 
@@ -88,9 +89,11 @@ def remplir(sortie: Path, journaux: list[dict], date_transmission: str = "") -> 
     for n, journal in enumerate(valides, start=depart):
         for col, valeur in enumerate(ligne(journal, date_transmission), start=1):
             cellule = feuille.cell(row=n, column=col, value=valeur)
-            cellule.number_format = "@"  # texte : garde le 0 des numéros et de « 01 »
+            # numéros en texte (garde le 0 de « 01… ») ; principal et sous-comptes en nombres
+            cellule.number_format = "General" if isinstance(valeur, int) else "@"
             # à compléter à la main : caractère illisible, contact non conforme
-            if "?" in str(valeur) or (col in (7, 10) and not re.fullmatch(r"01\d{8}", valeur)):
+            if ("?" in str(valeur) or (col in (7, 10) and not re.fullmatch(r"22901\d{8}", valeur))
+                    or (col in (12, 15) and not valeur)):
                 cellule.fill = A_COMPLETER
     shutil.copy2(MODELE, sortie / f"{MODELE.stem} (avant).xlsx")
     classeur.save(MODELE)  # PermissionError si le fichier est ouvert dans Excel

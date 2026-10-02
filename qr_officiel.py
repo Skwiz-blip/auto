@@ -150,6 +150,13 @@ def analyser(texte: str) -> dict:
         if m := re.search(r"NAISSANCE\s*\n?\s*Né\(e\) le\s*([\d-]+)\s*à\s*(.+)", texte):
             champs["date_naissance"] = m.group(1)
             champs["lieu_naissance"] = m.group(2).strip()[:60]
+        # dates du document officiel, à comparer à celles du papier
+        if m := re.search(r"EN DATE DU\s*(\d{2}-\d{2}-\d{4})", texte, re.IGNORECASE):
+            champs["date_immatriculation"] = m.group(1)
+        # « DÉLIVRÉ LE » puis, quelques lignes plus bas, la date (mise en page du portail)
+        if m := re.search(r"D[ÉE]LIVR[ÉE]E? LE[\s\S]{0,80}?(\d{2}-\d{2}-\d{4})", texte,
+                          re.IGNORECASE):
+            champs["date_delivrance"] = m.group(1)
     elif "ATTESTATION D'IMMATRICULATION" in texte.upper():
         champs["type"] = "ifu"
         champs["nom_etablissement"] = " ".join(texte.strip().split("\n")[0].split())[:60]

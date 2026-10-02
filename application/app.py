@@ -1,8 +1,3 @@
-"""Contrôle des dossiers marchands : interface de bureau.
-
-L'application pilote le moteur de contrôle (projet AUTO, controle.py) sans le modifier :
-elle le lance comme un programme séparé, suit sa progression et lit ses fichiers de résultats.
-"""
 import ctypes
 import ctypes.wintypes
 import json
@@ -25,10 +20,11 @@ DONNEES = Path(os.environ.get("APPDATA", str(ICI))) / "KIK-Controle"
 CONFIG = DONNEES / "config.json"
 MOTEUR_DEFAUT = ICI.parent  # l'application vit dans AUTO\application
 
-# mesurés sur 49 dossiers réels (septembre 2026)
-COUT_PAR_DOSSIER = {"haiku": 0.017, "sonnet": 0.045}
-MINUTES_PAR_DOSSIER = 0.3
+# lecture locale mesurée sur 247 dossiers réels (octobre 2026) ; s'y ajoute l'attente des lots
+# Claude (Sonnet, -50 %) : en général moins d'une heure, 24 h au plus
+MINUTES_PAR_DOSSIER = 0.25
 STATUTS = ("VALIDÉ", "À VÉRIFIER", "REJETÉ", "ERREUR")
+MAX_DOSSIERS = 50  # par lancement (le moteur ne traite que les 50 premiers PDF)
 SANS_FENETRE = 0x08000000  # CREATE_NO_WINDOW : pas de console noire derrière l'application
 
 
@@ -99,6 +95,16 @@ def _journaux(sortie: Path) -> list[dict]:
     return lignes
 
 
+SANS_COMMERCIAL = "Commercial non identifié"
+
+
+def _commercial(j: dict) -> str:
+    """Commercial (« Demandé par » de la fiche), nom harmonisé avec la liste connue."""
+    import referentiel
+    lu = (j.get("extraction") or {}).get("fiche", {}).get("commercial", "")
+    return referentiel.commercial(lu).replace("?", "").strip() or SANS_COMMERCIAL
+
+
 def _statut(j: dict) -> str:
     return j.get("decision", {}).get("statut") or "ERREUR"
 
@@ -113,6 +119,18 @@ def _source(sortie: Path) -> dict:
 def _raison_courte(texte: str) -> str:
     """Regroupe les points de vigilance en quelques familles lisibles."""
     t = texte.lower()
+    if "liste officielle" in t:
+        return "Commercial hors liste officielle"
+    if "fiche manuscrite" in t:
+        return "Écriture de la fiche illisible"
+    if "un seul caractère" in t:
+        return "Un caractère d'écart à confirmer"
+    if "contrat" in t:
+        return "Signature du contrat à confirmer"
+    if "nom du pdf" in t or "nom commercial" in t:
+        return "Nom du PDF à confirmer"
+    if "cachet" in t or "délivrance" in t:
+        return "Cachet ou date du RCCM à confirmer"
     if "apiex" in t:
         return "Carte APIEx au lieu de l'IFU"
     if "expire bientôt" in t:
@@ -161,9 +179,9 @@ class Api:
 
     @staticmethod
     def _etat_vide() -> dict:
-        return {"en_cours": False, "fait": 0, "total": 0, "sortie": "", "debut": 0.0,
-                "fin": 0.0, "cout": 0.0, "derniers": [], "erreur": "", "arrete": False,
-                "compte": {s: 0 for s in STATUTS}, "tri": "", "tri_erreur": ""}
+        return {"en_cours": False, "fait": 0, "total": 0, "lus": 0, "lots": 0, "requetes": 0,
+                "sortie": "", "debut": 0.0, "fin": 0.0, "derniers": [], "erreur": "",
+                "arrete": False, "compte": {s: 0 for s in STATUTS}, "tri": "", "tri_erreur": ""}
 
     # ---- paramètres
 
@@ -171,17 +189,15 @@ class Api:
         cfg = lire_config()
         cle = cle_api()
         return {"a_cle": bool(cle), "cle_apercu": f"…{cle[-4:]}" if cle else "",
-                "modele": cfg.get("modele", "haiku"), "moteur": str(moteur()),
+                "moteur": str(moteur()),
                 "moteur_ok": chemins.INSTALLE or (moteur() / "controle.py").exists(),
                 "installe": chemins.INSTALLE, "donnees": str(chemins.DONNEES),
-                "cout": COUT_PAR_DOSSIER, "minutes": MINUTES_PAR_DOSSIER}
+                "minutes": MINUTES_PAR_DOSSIER}
 
-    def enregistrer(self, cle: str = "", modele: str = "", chemin_moteur: str = "") -> dict:
+    def enregistrer(self, cle: str = "", chemin_moteur: str = "") -> dict:
         cfg = lire_config()
         if cle.strip():
             cfg["cle"] = _dpapi(cle.strip().encode(), chiffrer=True).hex()
-        if modele in COUT_PAR_DOSSIER:
-            cfg["modele"] = modele
         if chemin_moteur.strip():
             cfg["moteur"] = chemin_moteur.strip()
         ecrire_config(cfg)
@@ -215,16 +231,25 @@ class Api:
 
     def choisir_dossier(self) -> dict:
         choix = self._fenetre.create_file_dialog(webview.FOLDER_DIALOG)
-        if not choix:
-            return {}
-        return self.analyser_dossier(choix[0])
+        # l'analyse (dossiers déjà contrôlés) suit, selon la case « Recontrôler »
+        return {"chemin": choix[0]} if choix else {}
 
-    def analyser_dossier(self, chemin: str) -> dict:
+    def analyser_dossier(self, chemin: str, recontroler: bool = False) -> dict:
+        """PDF du dossier, dont ceux déjà contrôlés lors d'un lancement précédent (sautés, sauf
+        si l'on demande de les recontrôler) ; 50 au plus sont traités par lancement."""
+        import registre
         dossier = Path(chemin)
-        nb = len(list(dossier.glob("*.pdf"))) if dossier.is_dir() else 0
-        return {"chemin": str(dossier), "nb_pdf": nb}
+        pdfs = sorted(dossier.glob("*.pdf")) if dossier.is_dir() else []
+        try:
+            nouveaux, sautes = registre.a_controler(pdfs, recontroler)
+        except OSError:  # PDF ouvert ailleurs, dossier réseau indisponible…
+            nouveaux, sautes = pdfs, []
+        return {"chemin": str(dossier), "nb_pdf": len(pdfs), "nb_deja": len(sautes),
+                "nb_traites": min(len(nouveaux), MAX_DOSSIERS),
+                "nb_restants": max(0, len(nouveaux) - MAX_DOSSIERS), "max": MAX_DOSSIERS}
 
-    def lancer(self, dossier: str, modele: str = "haiku", reprendre: str = "") -> dict:
+    def lancer(self, dossier: str, reprendre: str = "", recontroler: bool = False) -> dict:
+        """Contrôle avec Claude Sonnet, en lots (Message Batches API : -50 %)."""
         with self._verrou:
             if self._etat["en_cours"]:
                 return {"ok": False, "message": "Un contrôle est déjà en cours."}
@@ -239,10 +264,12 @@ class Api:
                 if not script.exists():
                     return {"ok": False, "message": f"Moteur introuvable : {script}"}
                 commande, dossier_travail = [sys.executable, "-u", str(script)], moteur()
-            commande += ["--dossier", dossier, "--modele", modele,
+            commande += ["--dossier", dossier, "--modele", "sonnet",
                          "--jobs", str(max(2, min(6, (os.cpu_count() or 4) - 2)))]
             if reprendre:
                 commande += ["--reprendre", reprendre]
+            elif recontroler:
+                commande += ["--recontroler"]
             env = {**os.environ, "ANTHROPIC_API_KEY": cle, "PYTHONIOENCODING": "utf-8"}
             DONNEES.mkdir(parents=True, exist_ok=True)
             erreurs = open(DONNEES / "dernier_lancement_erreurs.txt", "w", encoding="utf-8")
@@ -252,11 +279,10 @@ class Api:
             self._etat = self._etat_vide() | {"en_cours": True, "debut": time.time()}
             if reprendre:
                 self._etat["sortie"] = reprendre
-        threading.Thread(target=self._suivre, args=(dossier, modele, erreurs),
-                         daemon=True).start()
+        threading.Thread(target=self._suivre, args=(dossier, erreurs), daemon=True).start()
         return {"ok": True}
 
-    def _suivre(self, dossier: str, modele: str, erreurs) -> None:
+    def _suivre(self, dossier: str, erreurs) -> None:
         motif_ligne = re.compile(r"^\s+(VALIDÉ|À VÉRIFIER|REJETÉ|ERREUR)\s.*?([\d.]+)\$\s+(.*)$")
         for ligne in self._processus.stdout:
             ligne = ligne.rstrip()
@@ -269,17 +295,24 @@ class Api:
                 elif ligne.startswith("DOSSIER_SORTIE "):
                     e["sortie"] = ligne.split(" ", 1)[1]
                     (Path(e["sortie"]) / "source.json").write_text(
-                        json.dumps({"dossier": dossier, "modele": modele}, ensure_ascii=False),
-                        encoding="utf-8")
+                        json.dumps({"dossier": dossier, "modele": "sonnet (lots)"},
+                                   ensure_ascii=False), encoding="utf-8")
                 elif ligne.startswith("PROGRESSION "):
                     fait, total = ligne.split()[1].split("/")
                     e["fait"], e["total"] = int(fait), int(total)
+                elif ligne.startswith("LECTURE_LOCALE "):
+                    e["lus"] = int(ligne.split()[1].split("/")[0])
+                elif ligne.startswith(("LOT_ENVOYE ", "LOT_TERMINE ")):
+                    # « LOT_ENVOYE <lot> <requêtes> <lots en cours> »
+                    _, _, requetes, en_cours = ligne.split()
+                    e["lots"] = int(en_cours)
+                    e["requetes"] += int(requetes) * (1 if ligne.startswith("LOT_E") else -1)
+                    e["requetes"] = max(e["requetes"], 0)
                 elif m := re.match(r"(\d+) dossier\(s\) à traiter(?:, (\d+) déjà faits)?", ligne):
                     e["fait"] = int(m.group(2) or 0)
                     e["total"] = int(m.group(1)) + e["fait"]
                 elif m := motif_ligne.match(ligne):
-                    statut, cout, nom = m.groups()
-                    e["cout"] += float(cout)
+                    statut, _, nom = m.groups()
                     e["compte"][statut] += 1
                     e["derniers"] = ([{"statut": statut, "dossier": nom.split("  !!")[0]}]
                                      + e["derniers"])[:8]
@@ -334,7 +367,8 @@ class Api:
                 date_txt = quand.strftime("%d/%m/%Y %H:%M")
             except ValueError:
                 date_txt = sortie.name
-            total = len(list(Path(src["dossier"]).glob("*.pdf"))) if Path(src["dossier"]).is_dir() else 0
+            total = min(MAX_DOSSIERS, len(list(Path(src["dossier"]).glob("*.pdf")))
+                        if Path(src["dossier"]).is_dir() else 0)
             liste.append({"sortie": str(sortie), "date": date_txt, "nb": len(journaux),
                           # des dossiers en erreur (crédit épuisé, réseau…) se reprennent
                           "termine": (sortie / "synthese.txt").exists()
@@ -347,16 +381,15 @@ class Api:
     def resultats(self, sortie: str) -> dict:
         dossier = Path(sortie)
         items, compte, motifs, raisons = [], {s: 0 for s in STATUTS}, {}, {}
-        cout = 0.0
         avec_qr = 0
-        # les lancements antérieurs à la reprise n'ont leurs coûts que dans resultats.csv
+        # les lancements antérieurs à la reprise n'ont leurs pages que dans resultats.csv
         anciennes = {}
         if (dossier / "resultats.csv").exists():
             import csv
             with open(dossier / "resultats.csv", encoding="utf-8-sig") as f:
                 for r in csv.DictReader(f, delimiter=";"):
                     anciennes[r["dossier"]] = {k: _nombre(v) for k, v in r.items()
-                                               if k in ("cout_usd", "pages", "pages_envoyees")}
+                                               if k in ("pages", "pages_envoyees")}
         for j in _journaux(dossier):
             statut = _statut(j)
             compte[statut] += 1
@@ -366,7 +399,6 @@ class Api:
             cip = ext.get("piece_identite", {})
             officiel = list(j.get("officiel", {}))
             avec_qr += bool(officiel)
-            cout += float(ligne.get("cout_usd", 0) or 0)
             for b in dec.get("bloquants", []):
                 motifs[b["motif"]] = motifs.get(b["motif"], 0) + 1
             # « Autre » en dernier : les raisons précises d'abord
@@ -376,7 +408,7 @@ class Api:
                 for f in familles:
                     raisons[f] = raisons.get(f, 0) + 1
             items.append({
-                "dossier": j["dossier"], "statut": statut,
+                "dossier": j["dossier"], "statut": statut, "commercial": _commercial(j),
                 "bloquants": dec.get("bloquants", []), "vigilance": dec.get("vigilance", []),
                 "particuliers": dec.get("particuliers", []), "familles": familles,
                 "erreur": j.get("erreur", ""), "qr": officiel,
@@ -384,16 +416,20 @@ class Api:
                 "cip_expiration": cip.get("date_expiration", ""),
                 "rccm": ext.get("rccm", {}).get("numero", ""),
                 "ifu": ext.get("ifu", {}).get("numero", ""),
-                "cout": float(ligne.get("cout_usd", 0) or 0),
                 "pages": ligne.get("pages", 0), "pages_envoyees": ligne.get("pages_envoyees", 0)})
         ordre = {"REJETÉ": 0, "À VÉRIFIER": 1, "ERREUR": 2, "VALIDÉ": 3}
         items.sort(key=lambda i: (ordre[i["statut"]], i["dossier"]))
+        # par commercial : nombre de dossiers par statut (non identifiés en dernier)
+        commerciaux = {}
+        for i in items:
+            c = commerciaux.setdefault(i["commercial"], {s: 0 for s in STATUTS} | {"total": 0})
+            c[i["statut"]] += 1
+            c["total"] += 1
+        commerciaux = sorted(commerciaux.items(),
+                             key=lambda x: (x[0] == SANS_COMMERCIAL, x[0]))
         nb = len(items)
-        reussis = nb - compte["ERREUR"]
         src = _source(dossier)
-        return {"items": items, "compte": compte, "nb": nb, "cout": round(cout, 3),
-                "cout_moyen": round(cout / max(reussis, 1), 4),
-                "projection_mois": round(cout / max(reussis, 1) * 3000),
+        return {"items": items, "compte": compte, "nb": nb, "commerciaux": commerciaux,
                 "minutes": _minutes(dossier), "avec_qr": avec_qr,
                 "motifs": sorted(motifs.items(), key=lambda x: -x[1]),
                 "raisons": sorted(raisons.items(), key=lambda x: -x[1]),
@@ -427,7 +463,7 @@ class Api:
         racine = source / f"Tri du {quand}"
         noms = {"VALIDÉ": "1 - Validés", "À VÉRIFIER": "2 - À vérifier",
                 "REJETÉ": "3 - Rejetés", "ERREUR": "4 - Erreurs techniques"}
-        motifs = {s: [] for s in noms}
+        motifs = {s: {} for s in noms}  # statut -> commercial -> blocs
         compte = {s: 0 for s in noms}
         manquants = []
         for j in _journaux(sortie):
@@ -450,11 +486,24 @@ class Api:
             raisons = ([f"{b['motif']} : {b['detail']}" for b in dec.get("bloquants", [])]
                        + dec.get("vigilance", []) + ([j["erreur"]] if j.get("erreur") else []))
             if statut != "VALIDÉ":
-                motifs[statut].append(f"{j['dossier']}\n" + "".join(f"  - {r}\n" for r in raisons))
-        # à côté des PDF, la liste des raisons, lisible sans ouvrir l'application
-        for statut, blocs in motifs.items():
-            if blocs:
-                (racine / noms[statut] / "_motifs.txt").write_text("\n".join(blocs), encoding="utf-8")
+                commercial = _commercial(j)
+                motifs[statut].setdefault(commercial, []).append(
+                    f"{j['dossier']} — "
+                    + (commercial if commercial == SANS_COMMERCIAL else f"Commercial : {commercial}")
+                    + "\n"
+                    + "".join(f"  - {r}\n" for r in raisons))
+        # à côté des PDF, la liste des raisons regroupée par commercial, lisible sans
+        # ouvrir l'application
+        for statut, par_commercial in motifs.items():
+            if not par_commercial:
+                continue
+            sections = []
+            for commercial in sorted(par_commercial, key=lambda c: (c == SANS_COMMERCIAL, c)):
+                blocs = par_commercial[commercial]
+                sections.append(f"===== {commercial} ({len(blocs)} dossier"
+                                f"{'s' if len(blocs) > 1 else ''}) =====\n\n" + "\n".join(blocs))
+            (racine / noms[statut] / "_motifs.txt").write_text("\n\n".join(sections),
+                                                             encoding="utf-8")
         if ouvrir and racine.exists():
             os.startfile(racine)
         return {"ok": True, "dossier": str(racine), "compte": compte, "manquants": manquants}
@@ -486,27 +535,53 @@ class Api:
         classeur = Workbook()
         feuille = classeur.active
         feuille.title = "Résultats"
-        entetes = ["Statut", "Dossier", "Motifs de rejet", "Points à vérifier",
+        entetes = ["Statut", "Dossier", "Commercial", "Motifs de rejet", "Points à vérifier",
                    "Nom sur la CIP", "Expiration CIP", "N° RCCM", "N° IFU",
-                   "Source RCCM/IFU", "Coût ($)"]
+                   "Source RCCM/IFU"]
         feuille.append(entetes)
         for i in donnees["items"]:
             feuille.append([
-                i["statut"], i["dossier"],
+                i["statut"], i["dossier"], i["commercial"],
                 "\n".join(f"{b['motif']} : {b['detail']}" for b in i["bloquants"]) or i["erreur"],
                 "\n".join(i["vigilance"]), i["cip_nom"], i["cip_expiration"], i["rccm"], i["ifu"],
-                "QR officiel" if i["qr"] else "Lecture du scan", round(i["cout"], 4)])
+                "QR officiel" if i["qr"] else "Lecture du scan"])
         bleu = PatternFill("solid", fgColor="1F5FD6")
         for cellule in feuille[1]:
             cellule.font = Font(bold=True, color="FFFFFF")
             cellule.fill = bleu
-        for colonne, largeur in zip("ABCDEFGHIJ", (13, 34, 50, 60, 30, 15, 22, 17, 17, 10)):
+        for colonne, largeur in zip("ABCDEFGHIJ", (13, 34, 26, 50, 60, 30, 15, 22, 17, 17)):
             feuille.column_dimensions[colonne].width = largeur
         for ligne in feuille.iter_rows(min_row=2):
             for cellule in ligne:
                 cellule.alignment = Alignment(wrap_text=True, vertical="top")
         feuille.freeze_panes = "A2"
         feuille.auto_filter.ref = feuille.dimensions
+
+        # Par commercial : un bloc par commercial, ses dossiers rejetés et à vérifier
+        recap = classeur.create_sheet("Par commercial")
+        recap.append(["Commercial", "Rejetés", "À vérifier", "Validés", "Total"])
+        for cellule in recap[1]:
+            cellule.font = Font(bold=True, color="FFFFFF")
+            cellule.fill = bleu
+        for commercial, c in donnees["commerciaux"]:
+            recap.append([commercial, c["REJETÉ"], c["À VÉRIFIER"], c["VALIDÉ"], c["total"]])
+        recap.append([])
+        recap.append(["Commercial", "Dossier", "Statut", "Motif / point à vérifier"])
+        for cellule in recap[recap.max_row]:
+            cellule.font = Font(bold=True, color="FFFFFF")
+            cellule.fill = bleu
+        a_traiter = sorted((i for i in donnees["items"] if i["statut"] != "VALIDÉ"),
+                           key=lambda i: (i["commercial"] == SANS_COMMERCIAL, i["commercial"],
+                                          i["statut"], i["dossier"]))
+        for i in a_traiter:
+            raisons = ([f"{b['motif']} : {b['detail']}" for b in i["bloquants"]]
+                       + i["vigilance"] + ([i["erreur"]] if i["erreur"] else []))
+            recap.append([i["commercial"], i["dossier"], i["statut"], "\n".join(raisons)])
+        for colonne, largeur in zip("ABCDE", (30, 40, 13, 90, 8)):
+            recap.column_dimensions[colonne].width = largeur
+        for ligne in recap.iter_rows(min_row=2):
+            for cellule in ligne:
+                cellule.alignment = Alignment(wrap_text=True, vertical="top")
         fichier = Path(sortie) / "resultats.xlsx"
         try:
             classeur.save(fichier)

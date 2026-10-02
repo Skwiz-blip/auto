@@ -25,11 +25,15 @@ else:
 
 SORTIES = DONNEES / "sorties"
 MODELE = DONNEES / "MODELE SHAREPOINT VC.xlsx"
+# liste officielle des commerciaux (BDP) fournie par KIK : modifiable sans toucher au programme
+COMMERCIAUX = DONNEES / "NOM DES COMMERCIAUX.xlsx"
 
 
 def preparer() -> None:
-    """Crée le dossier de données et y dépose le modèle SharePoint vierge au premier lancement."""
+    """Crée le dossier de données et y dépose, au premier lancement, le modèle SharePoint vierge
+    et la liste des commerciaux livrés avec le programme."""
     SORTIES.mkdir(parents=True, exist_ok=True)
-    vierge = RESSOURCES / "MODELE SHAREPOINT VC.xlsx"
-    if not MODELE.exists() and vierge.exists() and vierge != MODELE:
-        shutil.copy2(vierge, MODELE)
+    for cible in (MODELE, COMMERCIAUX):
+        livre = RESSOURCES / cible.name
+        if not cible.exists() and livre.exists() and livre != cible:
+            shutil.copy2(livre, cible)
