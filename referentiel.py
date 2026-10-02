@@ -29,8 +29,7 @@ COMMUNES = {
     "ZOU": ["Abomey", "Agbangnizoun", "Bohicon", "Covè", "Djidja", "Ouinhi", "Zagnanado",
             "Za-Kpota", "Zogbodomey"],
 }
-DEPARTEMENTS = list(COMMUNES)
-# arrondissements et localités souvent écrits dans la case « Ville » -> commune
+DEPARTEMENTS = list(COMMUNES) 
 LOCALITES = {
     "CALAVI": "Abomey-Calavi", "ABCALAVI": "Abomey-Calavi", "AKASSATO": "Abomey-Calavi",
     "GODOMEY": "Abomey-Calavi", "OUEDO": "Abomey-Calavi", "HEVIE": "Abomey-Calavi",
@@ -47,26 +46,13 @@ LOCALITES = {
     "GOUNLI": "Covè", "AZOVE": "Aplahoué",
 }
 
-# Commerciaux (BDP) : liste officielle de KIK, « NOM DES COMMERCIAUX.xlsx » (colonnes
-# DÉPARTEMENT, BDP). Un nom mal écrit ou mal lu sur la fiche est rattaché au plus proche.
-# Liste de secours (relevée sur les fiches de septembre 2026) si le fichier est absent.
-COMMERCIAUX_SECOURS = [
-    "ADAMOU A. YACOUBOU", "AGBOTO GHISLAIN", "AGNAN RAOUL", "ASSANATA ORPHERIQUE",
-    "AWO BERNADIN", "BOSSOU GABIN", "CHICOTO EVRARD LANDRY", "DAGBEGNON JULIEN",
-    "DOVONOU BERNARD", "HELE PRINCE", "ILLO ABOUDOU WABI", "KAKPOVI SEBASTIEN",
-    "MOUZOUN HONORE", "PADONOU ERIC", "QUENUM SALOMON", "SALIGA THIERRY",
-    "SOUNOUVOU FLORENT", "TAGNON ANGE", "TAPE OLIVIER",
-]
-
-
-def _charger_commerciaux() -> dict[str, str]:
-    """{nom du BDP: département}, tels que KIK les a saisis dans le fichier officiel."""
+def _charger_commerciaux() -> dict[str, str]: 
     try:
         from openpyxl import load_workbook
         feuille = load_workbook(chemins.COMMERCIAUX, read_only=True).worksheets[0]
         lignes = list(feuille.iter_rows(values_only=True))
-    except Exception:  # fichier absent, ouvert ailleurs ou illisible : liste de secours
-        return dict.fromkeys(COMMERCIAUX_SECOURS, "")
+    except Exception:  # fichier absent, ouvert ailleurs ou illisible
+        return {}
     entete = [_cle(str(v or "")) for v in lignes[0]] if lignes else []
     col_nom = entete.index("BDP") if "BDP" in entete else len(entete) - 1
     col_dept = next((i for i, e in enumerate(entete) if e.startswith("DEPARTEMENT")), None)
@@ -75,7 +61,7 @@ def _charger_commerciaux() -> dict[str, str]:
         if col_nom < len(ligne) and ligne[col_nom] and str(ligne[col_nom]).strip():
             dept = str(ligne[col_dept] or "").strip() if col_dept is not None else ""
             liste.setdefault(" ".join(str(ligne[col_nom]).split()), dept)
-    return liste or dict.fromkeys(COMMERCIAUX_SECOURS, "")
+    return liste
 
 
 _COMMUNE_DEPT = {c: d for d, liste in COMMUNES.items() for c in liste}
@@ -100,13 +86,11 @@ def _plus_proche(cle: str, choix: dict[str, str], seuil: float) -> str:
 # liste officielle : seuls ces noms sont reconnus (fiche, fichier SharePoint, application)
 DEPT_COMMERCIAL = _charger_commerciaux()
 COMMERCIAUX = list(DEPT_COMMERCIAL)
-# départements couverts par les commerciaux de KIK (ceux du fichier officiel)
-DEPARTEMENTS_KIK = (list(dict.fromkeys(d for d in DEPT_COMMERCIAL.values() if d))
-                    or list(_NOMS_DEPT.values()))
+# départements : uniquement ceux du fichier officiel, rien de plus
+DEPARTEMENTS_KIK = list(dict.fromkeys(d for d in DEPT_COMMERCIAL.values() if d))
 
 
-def commune(ville_lue: str) -> str:
-    """Commune officielle correspondant à la ville écrite, ou "" si rien ne correspond."""
+def commune(ville_lue: str) -> str: 
     cle = _cle(ville_lue)
     if not cle:
         return ""
@@ -124,44 +108,41 @@ def commune(ville_lue: str) -> str:
 
 
 def departement(dept_lu: str, commune_trouvee: str = "", commercial_lu: str = "") -> str:
-    """Département : celui de la commune quand la ville est reconnue ; sinon l'écriture de la
-    fiche rangée parmi les départements de KIK (fichier des commerciaux : « ATL » ->
-    Atlantique) ; à défaut, le département du commercial qui a fait la demande."""
-    if commune_trouvee in _COMMUNE_DEPT:
-        return _NOMS_DEPT[_COMMUNE_DEPT[commune_trouvee]]
-    cle = _cle(dept_lu)
     choix = {_cle(d): d for d in DEPARTEMENTS_KIK}
-    if len(cle) >= 3:
+    # commune reconnue : son département, s'il fait partie de ceux du fichier (Cotonou ->
+    # Littoral n'y est pas : on passe au département du commercial, puis à l'écriture)
+    if commune_trouvee in _COMMUNE_DEPT and _COMMUNE_DEPT[commune_trouvee] in choix:
+        return choix[_COMMUNE_DEPT[commune_trouvee]]
+    # chaque commercial (BDP) est rattaché à un département dans le fichier
+    if commercial_lu and (dept := DEPT_COMMERCIAL.get(commercial(commercial_lu), "")):
+        return dept
+    cle = _cle(dept_lu)
+    if len(cle) >= 3 and choix:
         # abréviation : « ATL », « COLL »
         debut = [d for c, d in choix.items() if c.startswith(cle)]
         if len(debut) == 1:
             return debut[0]
         if trouve := _plus_proche(cle, choix, 0.6):
             return trouve
-    return DEPT_COMMERCIAL.get(commercial(commercial_lu), "") if commercial_lu else ""
+    return ""
 
 
-def _ressemblance(lu: str, nom: str) -> float:
-    """Ressemblance entre un nom écrit à la main et un nom officiel : nom entier (dans les deux
-    ordres) ou mot à mot (« DOVENOU Benard » / « Bernard DOVONOU »)."""
+def _ressemblance(lu: str, nom: str) -> float: 
     mots_nom = [_cle(m) for m in nom.split() if len(_cle(m)) >= 2]
     mots_lus = [_cle(m) for m in re.split(r"[\s.\-]+", lu) if len(_cle(m)) >= 2]
     if not mots_nom or not mots_lus:
         return 0.0
     entier = max(SequenceMatcher(None, _cle(lu), "".join(ordre)).ratio()
                  for ordre in (mots_nom, mots_nom[::-1]))
-    # chaque mot officiel comparé au mot lu le plus proche, pondéré par sa longueur
+
     mot_a_mot = sum(len(m) * max(SequenceMatcher(None, m, l).ratio() for l in mots_lus)
                     for m in mots_nom) / sum(len(m) for m in mots_nom)
     return max(entier, mot_a_mot)
 
 
-def commercial(lu: str) -> str:
-    """Commercial écrit après « Demandé par », rattaché à la liste officielle de KIK (« TADE
-    Olivier » -> TAPE OLIVIER). Seuls les noms de la liste sont rendus : écriture trop éloignée
-    ou ambiguë (deux noms aussi proches) -> "" (commercial non identifié)."""
+def commercial(lu: str) -> str: 
     texte = re.sub(r"(?i)^\s*demand[ée]e? par\s*:?\s*", "", lu or "").replace("?", "").strip()
-    if len(_cle(texte)) < 3:
+    if len(_cle(texte)) < 3 or not COMMERCIAUX:
         return ""
     scores = sorted(((_ressemblance(texte, nom), nom) for nom in COMMERCIAUX), reverse=True)
     meilleur, nom = scores[0]
@@ -169,11 +150,12 @@ def commercial(lu: str) -> str:
     return nom if meilleur >= 0.85 or (meilleur >= 0.6 and meilleur - second >= 0.08) else ""
 
 
-def nombre_comptes(valeur: str, defaut: int, maximum: int) -> int:
-    """Principal (head) et sous-comptes, écrits 1 ou 0 (jamais 01 ni 00) : le chiffre écrit,
-    même mal formé (« 0? » -> 0) ; case vide, illisible ou invraisemblable -> défaut (1 pour le
-    head, 0 pour les sous-comptes)."""
+def nombre_comptes(valeur: str, defaut: int) -> int:
+    # 0 ou 1 seulement : un 1 écrit -> 1 ; que des zéros -> 0 ; vide ou autre chiffre (zéro
+    # stylisé lu « 5 », « 2 »…) -> défaut (1 pour le head, 0 pour les sous-comptes)
     chiffres = re.sub(r"\D", "", valeur or "")
-    if not chiffres or int(chiffres) > maximum:
-        return defaut
-    return int(chiffres)
+    if "1" in chiffres:
+        return 1
+    if chiffres and set(chiffres) == {"0"}:
+        return 0
+    return defaut

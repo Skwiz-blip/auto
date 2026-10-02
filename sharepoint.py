@@ -23,7 +23,21 @@ MODELE = chemins.MODELE
 A_COMPLETER = PatternFill("solid", fgColor="FFD8A8")  # orange clair
 
 
-PRINCIPAL_MAX, SOUS_COMPTES_MAX = 10, 20  # au-delà : chiffre mal lu, valeur par défaut
+def _contact(fiche: dict, pid: dict, rccm: dict, ifu: dict) -> str:
+    """Numéro de contact (KIK) : le « Numéro personnel » écrit sur la fiche, celui que le
+    marchand utilise (le numéro du RCCM n'est parfois plus en service). S'il ne diffère que
+    d'un chiffre d'un numéro imprimé (CIP, RCCM, IFU), c'est une erreur de lecture de
+    l'écriture : le numéro imprimé est retenu. Fiche vide ou illisible : CIP, RCCM, puis IFU."""
+    imprimes = [n for n in (numero_benin(pid["telephone"]), numero_benin(rccm["telephone"]),
+                            numero_benin(ifu["telephone"])) if n]
+    ecrit = numero_benin(fiche["telephone"]) if "?" not in fiche["telephone"] else ""
+    if not ecrit:
+        return imprimes[0] if imprimes else ""
+    if ecrit in imprimes:
+        return ecrit  # confirmé par une pièce imprimée
+    proche = next((n for n in imprimes
+                   if sum(a != b for a, b in zip(n, ecrit)) == 1), "")
+    return proche or ecrit
 
 
 def ligne(journal: dict, date_transmission: str) -> list:
@@ -38,17 +52,14 @@ def ligne(journal: dict, date_transmission: str) -> list:
     # promoteur : nom et prénoms du RCCM (à défaut, ceux de la pièce d'identité)
     nom = (rccm["nom"] or pid["nom"]).strip().upper()
     prenoms = (rccm["prenoms"] or pid["prenoms"]).strip().upper()
-    # contact : numéro imprimé sur le RCCM, puis la CIP, l'IFU, celui écrit sur la fiche ;
-    # au format KIK « 229 » + numéro (2290197155835)
-    numero = (numero_benin(rccm["telephone"]) or numero_benin(pid["telephone"])
-              or numero_benin(ifu["telephone"]) or numero_benin(fiche["telephone"]))
+    numero = _contact(fiche, pid, rccm, ifu)
     contact = ("229" + numero) if numero else re.sub(r"[^\d?]", "", fiche["telephone"])
     ville = referentiel.commune(fiche["ville"])
     return [
         date_transmission,                                                   # A
         structure,                                                           # B STRUCTURE
-        referentiel.nombre_comptes(fiche["nombre_head"], 1, PRINCIPAL_MAX),             # C
-        referentiel.nombre_comptes(fiche["nombre_sous_comptes"], 0, SOUS_COMPTES_MAX),  # D
+        referentiel.nombre_comptes(fiche["nombre_head"], 1),          # C PRINCIPAL : 0 ou 1
+        referentiel.nombre_comptes(fiche["nombre_sous_comptes"], 0),  # D SOUS COMPTE : 0 ou 1
         nom, prenoms, contact,                                               # E-G PROMOTEUR
         nom, prenoms, contact,                                               # H-J GESTIONNAIRE
         fiche["secteur"].strip(),                                            # K SECTEUR

@@ -945,7 +945,7 @@ async def main():
     journaux = list(faits.values()) + nouveaux
     rows = [j["ligne"] for j in journaux]
     if not rows:
-        print("Aucun dossier PDF trouvé.")
+        print("Aucun nouveau dossier à contrôler (dossier vide, ou PDF tous déjà contrôlés).")
         return
     avec_qr = sum(1 for r in rows if r["qr_officiel"])
     envoyees = sum(r["pages_envoyees"] for r in rows)

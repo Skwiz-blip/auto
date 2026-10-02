@@ -132,8 +132,10 @@ Règles de saisie :
 - fiche (FICHE DE CREATION MARCHAND - CELTIIS CASH, manuscrite) : nom_structure = « Nom de la
   structure » ; secteur = « Secteur d'activité » ; representant = « Nom du représentant
   légal » ; telephone = « Numéro personnel » ; ville, quartier, departement = « Ville », « Quartier », « Département » ;
-  nombre_head = « Nombre de Head » ; nombre_sous_comptes = « Nombre de sous comptes » (pour
-  ces deux cases : le chiffre auquel l'écriture ressemble le plus, jamais « ? ») ;
+  nombre_head = « Nombre de Head » ; nombre_sous_comptes = « Nombre de sous comptes » (ces
+  deux cases ne contiennent que 0 ou 1, souvent écrits « 00 » / « 01 » avec des zéros
+  arrondis ou ouverts qui ressemblent à un 5, un 2 ou un D : rends "0" ou "1" selon ce à quoi
+  l'écriture ressemble, jamais un autre chiffre ni « ? ») ;
   commercial = nom écrit après « Demandé par » ; date_demande = « Date et signature ».
   Recopie lettre par lettre ce qui est écrit, fautes comprises : le nom de la structure et
   celui du représentant seront comparés au RCCM, une faute du commercial doit rester visible.
