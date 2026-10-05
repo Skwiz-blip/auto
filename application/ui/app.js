@@ -432,9 +432,9 @@ async function afficherParametres() {
     ? `Clé enregistrée (${c.cle_apercu}). Saisissez-en une nouvelle pour la remplacer.`
     : "Aucune clé enregistrée. Collez votre clé API Claude ci-dessous.";
   $("oublier-cle").hidden = !c.a_cle;
-  $("carte-moteur").hidden = !!c.installe;  // application installée : moteur intégré
+  $("carte-moteur").hidden = !!c.installe;  
   $("moteur").value = c.moteur;
-  $("moteur-etat").textContent = c.moteur_ok ? "Moteur trouvé (controle.py)." : "controle.py introuvable dans ce dossier.";
+  $("moteur-etat").textContent = c.moteur_ok ? "" : "controle.py introuvable dans ce dossier.";
 }
 
 $("enregistrer-cle").addEventListener("click", async () => {

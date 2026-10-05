@@ -295,7 +295,7 @@ class Api:
                 elif ligne.startswith("DOSSIER_SORTIE "):
                     e["sortie"] = ligne.split(" ", 1)[1]
                     (Path(e["sortie"]) / "source.json").write_text(
-                        json.dumps({"dossier": dossier, "modele": "sonnet (lots)"},
+                        json.dumps({"dossier": dossier, "": ""},
                                    ensure_ascii=False), encoding="utf-8")
                 elif ligne.startswith("PROGRESSION "):
                     fait, total = ligne.split()[1].split("/")
