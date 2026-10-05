@@ -20,9 +20,9 @@ DONNEES = Path(os.environ.get("APPDATA", str(ICI))) / "KIK-Controle"
 CONFIG = DONNEES / "config.json"
 MOTEUR_DEFAUT = ICI.parent  # l'application vit dans AUTO\application
 
-# lecture locale mesurée sur 247 dossiers réels (octobre 2026) ; s'y ajoute l'attente des lots
-# Claude (Sonnet, -50 %) : en général moins d'une heure, 24 h au plus
-MINUTES_PAR_DOSSIER = 0.25
+# lecture locale mesurée sur un lancement réel de 50 dossiers (2 octobre 2026 : 19,6 min) ;
+# s'y ajoute l'attente des lots Claude (Sonnet, -50 %) : en général moins d'une heure, 24 h au plus
+MINUTES_PAR_DOSSIER = 0.4
 STATUTS = ("VALIDÉ", "À VÉRIFIER", "REJETÉ", "ERREUR")
 MAX_DOSSIERS = 50  # par lancement (le moteur ne traite que les 50 premiers PDF)
 SANS_FENETRE = 0x08000000  # CREATE_NO_WINDOW : pas de console noire derrière l'application
@@ -192,7 +192,14 @@ class Api:
                 "moteur": str(moteur()),
                 "moteur_ok": chemins.INSTALLE or (moteur() / "controle.py").exists(),
                 "installe": chemins.INSTALLE, "donnees": str(chemins.DONNEES),
-                "minutes": MINUTES_PAR_DOSSIER}
+                "minutes": MINUTES_PAR_DOSSIER, "max_dossiers": MAX_DOSSIERS}
+
+    def commerciaux(self) -> dict:
+        """Liste officielle des commerciaux (fichier Excel de KIK), affichée dans le guide."""
+        import referentiel
+        return {"present": chemins.COMMERCIAUX.exists(),
+                "liste": [{"nom": nom, "departement": dept}
+                          for nom, dept in referentiel.DEPT_COMMERCIAL.items()]}
 
     def enregistrer(self, cle: str = "", chemin_moteur: str = "") -> dict:
         cfg = lire_config()

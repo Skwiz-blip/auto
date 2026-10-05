@@ -27,6 +27,10 @@
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
         Paramètres
       </button>
+      <button class="lien" data-vue="aide">
+        <svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/><path d="M9 8h7M9 12h5"/></svg>
+        Guide d'utilisation
+      </button>
     </nav>
     <div class="pied" id="etat-connexion"></div>
   </aside>
@@ -214,6 +218,271 @@
           <button class="btn" id="enregistrer-moteur">Enregistrer</button>
         </div>
         <p class="aide" id="moteur-etat"></p>
+      </div>
+    </section>
+
+    <!-- ================= GUIDE D'UTILISATION ================= -->
+    <section class="vue" id="vue-aide" hidden>
+      <header class="entete">
+        <div>
+          <h1>Guide d'utilisation</h1>
+          <p class="sous">Comment contrôler les dossiers marchands, lire les résultats et récupérer le fichier Excel.</p>
+        </div>
+      </header>
+
+      <div class="guide">
+        <aside class="sommaire" aria-label="Sommaire du guide">
+          <input type="search" id="guide-recherche" placeholder="Rechercher dans le guide…" aria-label="Rechercher dans le guide">
+          <nav id="guide-sommaire"></nav>
+        </aside>
+
+        <div class="guide-contenu">
+          <p class="vide" id="guide-aucun" hidden>Aucune rubrique ne contient ces mots.</p>
+
+          <section class="carte guide-section" id="g-apercu">
+            <h2>Context</h2>
+            <p>L'application contrôle les dossiers marchands Celtiis Cash. Un dossier est un PDF, un par marchand. Pour chaque dossier, elle lit les pièces, applique les règles de KIK et rend une décision&nbsp;: <span data-statut="VALIDÉ"></span> <span data-statut="À VÉRIFIER"></span> ou <span data-statut="REJETÉ"></span>, avec la raison.</p>
+            <ol class="pas">
+              <li>Vous choisissez le dossier qui contient les PDF.</li>
+              <li>Vous lancez la vérification.</li>
+              <li>Vous lisez les résultats dans le tableau de bord.</li>
+              <li>Vous récupérez le fichier Excel rempli et les PDF rangés par décision.</li>
+            </ol>
+            <h3>Ce que chaque PDF doit contenir</h3>
+            <ul>
+              <li>La fiche de création marchand, remplie à la main.</li>
+              <li>Le RCCM, avec ses deux pages.</li>
+              <li>L'attestation IFU. Une carte professionnelle ou une attestation CNSS est acceptée si le numéro IFU y figure.</li>
+              <li>Une pièce d'identité en cours de validité&nbsp;: CIP, CNI, carte CEDEAO, passeport…</li>
+              <li>Le contrat Celtiis Cash, signé par le marchand.</li>
+            </ul>
+          </section>
+
+          <section class="carte guide-section" id="g-demarrer">
+            <h2>Avant le premier contrôle</h2>
+            <ol class="pas">
+              <li><strong>Enregistrez la clé API Claude.</strong> Ouvrez <span class="ui">Paramètres</span>, collez la clé puis cliquez sur <span class="ui">Enregistrer</span>. Elle est testée avant d'être enregistrée. En bas à gauche, l'indicateur passe à «&nbsp;Prêt&nbsp;».</li>
+              <li><strong>Vérifiez la liste des commerciaux.</strong> Elle se trouve plus bas dans ce guide, rubrique «&nbsp;Liste des commerciaux&nbsp;».</li>
+              <li><strong>Vérifiez la connexion internet.</strong> L'application interroge le registre officiel de l'État et Claude.</li>
+            </ol>
+            <h3>Où sont vos fichiers</h3>
+            <p class="chemin-donnees"><code id="g-donnees"></code> <button class="btn secondaire" id="g-ouvrir-donnees" type="button">Ouvrir ce dossier</button></p>
+            <table>
+              <thead><tr><th>Fichier ou dossier</th><th>À quoi il sert</th></tr></thead>
+              <tbody>
+                <tr><td>MODELE SHAREPOINT VC.xlsx</td><td>Le fichier Excel rempli avec les dossiers validés.</td></tr>
+                <tr><td>NOM DES COMMERCIAUX.xlsx</td><td>La liste officielle des commerciaux et de leur département.</td></tr>
+                <tr><td>sorties</td><td>Les résultats de chaque contrôle, un dossier par lancement.</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="carte guide-section" id="g-lancer">
+            <h2>Lancer un contrôle</h2>
+            <ol class="pas">
+              <li>Ouvrez <span class="ui">Nouveau contrôle</span>.</li>
+              <li>Cliquez sur <span class="ui">Choisir un dossier…</span> et sélectionnez le dossier qui contient les PDF.</li>
+              <li>Lisez la ligne d'information&nbsp;: nombre de PDF trouvés, nombre déjà contrôlés, nombre qui sera traité.</li>
+              <li>Cliquez sur <span class="ui">Lancer la vérification</span>.</li>
+            </ol>
+            <h3>À savoir</h3>
+            <ul>
+              <li><strong><span class="g-max">50</span> dossiers au plus par lancement</strong>, dans l'ordre alphabétique. Relancez sur le même dossier pour traiter les suivants.</li>
+              <li><strong>Les dossiers déjà contrôlés sont sautés tout seuls.</strong> Un PDF corrigé puis renvoyé sous le même nom est contrôlé de nouveau, car le fichier a changé.</li>
+              <li>La case <span class="ui">Recontrôler aussi les dossiers déjà contrôlés</span> force un nouveau contrôle de tous les PDF. Ce contrôle est facturé une seconde fois, et les dossiers validés sont ajoutés une seconde fois au fichier Excel.</li>
+            </ul>
+            <p class="note attention">Laissez l'ordinateur allumé et l'application ouverte jusqu'à la fin. Le soir est le meilleur moment pour lancer.</p>
+            <p><button class="btn" type="button" data-aller="lancer">Ouvrir «&nbsp;Nouveau contrôle&nbsp;»</button></p>
+          </section>
+
+          <section class="carte guide-section" id="g-suivre">
+            <h2>Suivre l'avancement</h2>
+            <p>Un contrôle se déroule en deux temps.</p>
+            <ol class="pas">
+              <li><strong>Lecture sur ce PC.</strong> L'application reconnaît les pages et lit les QR codes officiels. Comptez une vingtaine de minutes pour <span class="g-max">50</span> dossiers.</li>
+              <li><strong>Lecture par Claude, par lots.</strong> Les réponses reviennent par paquets, en général en moins d'une heure, 24 heures au plus.</li>
+            </ol>
+            <p class="note">La barre avance par à-coups&nbsp;: plusieurs dossiers se terminent en même temps quand un lot revient. Une barre immobile pendant l'attente d'un lot est normale.</p>
+            <h3>Arrêter et reprendre</h3>
+            <ul>
+              <li><span class="ui">Arrêter</span> interrompt le contrôle. Les dossiers déjà traités sont conservés.</li>
+              <li>Pour continuer, ouvrez <span class="ui">Nouveau contrôle</span>&nbsp;: le contrôle apparaît sous «&nbsp;Contrôles interrompus&nbsp;». Cliquez sur <span class="ui">Reprendre</span>.</li>
+              <li>À la reprise, les lots déjà envoyés à Claude sont attendus, pas renvoyés&nbsp;: ils ne sont pas payés deux fois.</li>
+            </ul>
+            <h3>À la fin</h3>
+            <p>Les PDF sont rangés par décision et le fichier Excel est rempli, sans rien faire. Cliquez sur <span class="ui">Voir les résultats</span> ou sur <span class="ui">Ouvrir les PDF rangés</span>.</p>
+          </section>
+
+          <section class="carte guide-section" id="g-resultats">
+            <h2>Lire les résultats</h2>
+            <p>Tout se lit dans le <span class="ui">Tableau de bord</span>.</p>
+            <ul>
+              <li><strong>La liste en haut à droite</strong> choisit le contrôle affiché, du plus récent au plus ancien.</li>
+              <li><strong>Les indicateurs</strong> donnent le nombre de dossiers contrôlés, validés, à vérifier et rejetés, et la durée.</li>
+              <li><strong>Les deux graphiques</strong> montrent les motifs de rejet et les raisons des vérifications les plus fréquents.</li>
+              <li><strong>Le tableau «&nbsp;Dossiers&nbsp;»</strong> liste chaque dossier avec sa décision, son commercial et la raison.</li>
+            </ul>
+            <h3>Trouver un dossier</h3>
+            <ul>
+              <li>Les boutons <span class="ui">Tous</span>, <span class="ui">Validés</span>, <span class="ui">À vérifier</span>, <span class="ui">Rejetés</span> filtrent par décision.</li>
+              <li>La liste des commerciaux n'affiche que les dossiers d'un commercial.</li>
+              <li><span class="ui">Regrouper par commercial</span> classe les dossiers sous le nom de chaque commercial.</li>
+              <li>Le champ de recherche trouve un dossier par son nom ou par son commercial.</li>
+            </ul>
+            <h3>Voir le détail</h3>
+            <p>Cliquez sur une ligne. Le panneau de droite donne les motifs de rejet, les points à vérifier et les données lues. Le bouton <span class="ui">Ouvrir le PDF</span> ouvre le dossier d'origine.</p>
+            <p class="note">Dans la colonne «&nbsp;RCCM / IFU&nbsp;», <span class="badge officiel">QR officiel</span> signifie que les données viennent du registre de l'État&nbsp;: elles font foi. <span class="badge">Lecture du scan</span> signifie que le QR code était absent ou illisible, et que le document a été lu sur l'image.</p>
+          </section>
+
+          <section class="carte guide-section" id="g-decisions">
+            <h2>Comprendre les décisions</h2>
+            <table>
+              <thead><tr><th>Décision</th><th>Ce que cela veut dire</th><th>Ce que vous faites</th></tr></thead>
+              <tbody>
+                <tr><td><span data-statut="VALIDÉ"></span></td><td>Toutes les règles sont respectées.</td><td>Rien&nbsp;: le dossier est déjà dans le fichier Excel.</td></tr>
+                <tr><td><span data-statut="À VÉRIFIER"></span></td><td>L'application ne peut pas trancher seule.</td><td>Ouvrez le PDF, regardez le point signalé, puis validez ou rejetez vous-même.</td></tr>
+                <tr><td><span data-statut="REJETÉ"></span></td><td>Un défaut a été constaté sur le dossier.</td><td>Renvoyez le dossier au commercial avec le motif.</td></tr>
+                <tr><td><span data-statut="ERREUR"></span></td><td>Problème technique&nbsp;: réseau, crédit, PDF abîmé.</td><td>Reprenez le contrôle. Le dossier sera retenté.</td></tr>
+              </tbody>
+            </table>
+
+            <h3>Les sept motifs de rejet</h3>
+            <table>
+              <thead><tr><th>Motif</th><th>Quand il est appliqué</th></tr></thead>
+              <tbody>
+                <tr><td>Pdf mal nommé</td><td>Le nom du fichier n'est pas le nom commercial inscrit sur le RCCM.</td></tr>
+                <tr><td>Id expiré</td><td>La date d'expiration de la pièce d'identité est passée. La pièce est valide jusqu'au jour d'expiration inclus.</td></tr>
+                <tr><td>Photo illisible sur la pièce</td><td>La photo est absente ou le visage n'est pas reconnaissable.</td></tr>
+                <tr><td>Pièce floue</td><td>Le nom ou la date d'expiration de la pièce d'identité est illisible.</td></tr>
+                <tr><td>RCCM illisible</td><td>Le numéro du RCCM ou le nom du titulaire est illisible.</td></tr>
+                <tr><td>RCCM non conforme</td><td>Le nom sur le RCCM ou l'IFU diffère de la pièce d'identité. Le nom de la structure ou du représentant écrit sur la fiche diffère du RCCM. Le cachet du greffe ou la date de délivrance manque.</td></tr>
+                <tr><td>Dossier incomplet</td><td>Une pièce manque. Une case obligatoire de la fiche est vide. Le contrat n'est pas signé ou sa page de signature manque. La carte professionnelle ne porte pas de numéro IFU.</td></tr>
+              </tbody>
+            </table>
+
+            <h3>Pourquoi un dossier passe «&nbsp;à vérifier&nbsp;»</h3>
+            <ul>
+              <li>Une case de la fiche est illisible. L'application ne devine jamais une écriture.</li>
+              <li>Un seul caractère diffère entre deux noms&nbsp;: faute du commercial ou erreur de lecture.</li>
+              <li>Le commercial écrit après «&nbsp;Demandé par&nbsp;» n'est pas dans la liste officielle.</li>
+              <li>Deux lectures de la date d'expiration ou de la photo se contredisent.</li>
+              <li>Le même RCCM apparaît dans plusieurs dossiers, ou le fichier est nommé comme une copie.</li>
+              <li>Le greffe a ajouté «&nbsp;Monsieur&nbsp;» ou «&nbsp;Madame&nbsp;» au nom sur le RCCM.</li>
+              <li>Une association fournit un récépissé de déclaration à la place du RCCM.</li>
+            </ul>
+
+            <h3>Ce qui est toléré</h3>
+            <ul>
+              <li>Dans les noms&nbsp;: les espaces, les accents, les majuscules et l'ordre nom et prénoms.</li>
+              <li>Dans le nom du PDF&nbsp;: la forme juridique (ETS, SARL…), un numéro de point de vente à la fin («&nbsp;AMLIHO 2&nbsp;») et l'heure ajoutée par le scanner.</li>
+              <li>Un RCCM électronique sans cachet, s'il porte son numéro de référence.</li>
+            </ul>
+          </section>
+
+          <section class="carte guide-section" id="g-excel">
+            <h2>Le fichier Excel SharePoint</h2>
+            <p>À la fin de chaque contrôle, les dossiers <strong>validés</strong> sont ajoutés à la suite dans «&nbsp;MODELE SHAREPOINT VC.xlsx&nbsp;». Le bouton <span class="ui">Fichier SharePoint</span> du tableau de bord ouvre ce fichier.</p>
+            <table>
+              <thead><tr><th>Colonne</th><th>D'où vient la valeur</th></tr></thead>
+              <tbody>
+                <tr><td>Date de transmission</td><td>Le jour du contrôle.</td></tr>
+                <tr><td>Nom structure</td><td>Le nom commercial du RCCM.</td></tr>
+                <tr><td>Principal</td><td>«&nbsp;Nombre de Head&nbsp;» de la fiche&nbsp;: 0 ou 1. Case vide&nbsp;: 1.</td></tr>
+                <tr><td>Sous compte</td><td>«&nbsp;Nombre de sous comptes&nbsp;» de la fiche&nbsp;: 0 ou 1. Case vide&nbsp;: 0.</td></tr>
+                <tr><td>Nom et prénom du promoteur</td><td>Le RCCM. À défaut, la pièce d'identité.</td></tr>
+                <tr><td>Contact</td><td>Le «&nbsp;Numéro personnel&nbsp;» de la fiche, écrit 229 suivi du numéro.</td></tr>
+                <tr><td>Gestionnaire</td><td>Les mêmes nom, prénom et contact que le promoteur.</td></tr>
+                <tr><td>Secteur d'activité</td><td>La fiche.</td></tr>
+                <tr><td>Département</td><td>L'un des départements de la liste des commerciaux.</td></tr>
+                <tr><td>Ville / commune</td><td>La ville de la fiche, ramenée à l'une des 77 communes du Bénin.</td></tr>
+                <tr><td>Situation géographique</td><td>Le quartier écrit sur la fiche.</td></tr>
+                <tr><td>Nom du commercial</td><td>«&nbsp;Demandé par&nbsp;», rattaché à la liste officielle.</td></tr>
+                <tr><td>Numéro attribué</td><td>Laissé vide.</td></tr>
+              </tbody>
+            </table>
+            <ul>
+              <li>Tout le texte est écrit en majuscules.</li>
+              <li><strong>Une case orange est à compléter à la main</strong>&nbsp;: contact incomplet, département ou commercial non reconnu.</li>
+              <li>Un dossier n'est jamais ajouté deux fois pour un même contrôle.</li>
+              <li>Un dossier «&nbsp;à vérifier&nbsp;» que vous validez vous-même est à saisir à la main&nbsp;: l'application n'ajoute que les dossiers qu'elle a validés.</li>
+            </ul>
+            <p class="note attention">Fermez le fichier dans Excel avant de lancer un contrôle. S'il est resté ouvert, fermez-le puis cliquez sur <span class="ui">Fichier SharePoint</span>&nbsp;: les dossiers validés seront ajoutés à ce moment-là.</p>
+          </section>
+
+          <section class="carte guide-section" id="g-ranger">
+            <h2>PDF rangés et export</h2>
+            <h3>Les PDF rangés par décision</h3>
+            <p>À la fin du contrôle, un dossier «&nbsp;Tri du…&nbsp;» daté est créé dans le dossier de vos PDF. Il contient&nbsp;:</p>
+            <ul>
+              <li>«&nbsp;1 - Validés&nbsp;», «&nbsp;2 - À vérifier&nbsp;», «&nbsp;3 - Rejetés&nbsp;» et «&nbsp;4 - Erreurs techniques&nbsp;»&nbsp;;</li>
+              <li>dans chacun, un fichier «&nbsp;_motifs.txt&nbsp;» qui donne la raison de chaque dossier, regroupé par commercial.</li>
+            </ul>
+            <p>Vos PDF d'origine ne bougent pas. Le bouton <span class="ui">Ranger les PDF</span> refait ce rangement à la demande.</p>
+            <h3>L'export Excel des résultats</h3>
+            <p><span class="ui">Exporter Excel</span> crée «&nbsp;resultats.xlsx&nbsp;» avec deux feuilles&nbsp;: «&nbsp;Résultats&nbsp;», une ligne par dossier, et «&nbsp;Par commercial&nbsp;», le décompte et les dossiers à reprendre de chaque commercial.</p>
+            <p><span class="ui">Ouvrir le dossier</span> ouvre le dossier technique du contrôle affiché.</p>
+          </section>
+
+          <section class="carte guide-section" id="g-commerciaux">
+            <h2>Liste des commerciaux</h2>
+            <p>Seuls les commerciaux du fichier «&nbsp;NOM DES COMMERCIAUX.xlsx&nbsp;» sont reconnus. Un nom mal écrit sur la fiche est rattaché au nom le plus proche de la liste. S'il n'y ressemble pas, le dossier est marqué «&nbsp;Commercial non identifié&nbsp;» et passe à vérifier.</p>
+            <p>Les départements suivent la même règle&nbsp;: seuls ceux du fichier sont utilisés.</p>
+            <h3>Ajouter ou retirer un commercial</h3>
+            <ol class="pas">
+              <li>Ouvrez «&nbsp;NOM DES COMMERCIAUX.xlsx&nbsp;» dans le dossier de vos fichiers.</li>
+              <li>Ajoutez ou supprimez une ligne&nbsp;: le département dans la première colonne, le nom dans la colonne «&nbsp;BDP&nbsp;».</li>
+              <li>Enregistrez, puis fermez et rouvrez l'application.</li>
+            </ol>
+            <h3>Liste reconnue en ce moment</h3>
+            <p id="g-commerciaux-etat"></p>
+            <table id="g-commerciaux-table">
+              <thead><tr><th>Commercial</th><th>Département</th></tr></thead>
+              <tbody id="g-commerciaux-liste"></tbody>
+            </table>
+          </section>
+
+          <section class="carte guide-section" id="g-conseils">
+            <h2>Conseils pour limiter les rejets</h2>
+            <p>À transmettre aux commerciaux. La plupart des rejets viennent de ces points.</p>
+            <ul>
+              <li><strong>Nommez le PDF exactement comme le nom commercial du RCCM.</strong></li>
+              <li><strong>Scannez toutes les pages, bien à plat et nettes</strong>&nbsp;: les deux pages du RCCM et la page de signature du contrat sont souvent oubliées.</li>
+              <li><strong>Remplissez toutes les cases de la fiche</strong>, en lettres capitales lisibles.</li>
+              <li><strong>Écrivez le nom de la structure et celui du représentant comme sur le RCCM</strong>, sans initiale ni prénom en moins.</li>
+              <li><strong>Écrivez 1 ou 0</strong> pour le nombre de Head et de sous-comptes.</li>
+              <li><strong>Écrivez votre nom après «&nbsp;Demandé par&nbsp;»</strong> comme il figure dans la liste des commerciaux.</li>
+              <li><strong>Vérifiez la date d'expiration</strong> de la pièce d'identité avant d'envoyer.</li>
+              <li><strong>Gardez le QR code du RCCM et de l'IFU bien net</strong>&nbsp;: il permet de vérifier le document auprès de l'État.</li>
+            </ul>
+          </section>
+
+          <section class="carte guide-section" id="g-problemes">
+            <h2>En cas de problème</h2>
+            <table>
+              <thead><tr><th>Ce que vous voyez</th><th>Ce qu'il faut faire</th></tr></thead>
+              <tbody>
+                <tr><td>«&nbsp;Clé API à ajouter&nbsp;» ou «&nbsp;Clé refusée par Claude&nbsp;»</td><td>Ouvrez <span class="ui">Paramètres</span> et enregistrez une clé valide.</td></tr>
+                <tr><td>«&nbsp;Crédit Claude épuisé&nbsp;»</td><td>Rechargez le compte sur console.anthropic.com, puis cliquez sur <span class="ui">Reprendre</span>. Les dossiers déjà traités ne sont pas refacturés.</td></tr>
+                <tr><td>«&nbsp;Fermez le fichier SharePoint dans Excel puis réessayez&nbsp;»</td><td>Fermez le fichier Excel, puis cliquez de nouveau sur <span class="ui">Fichier SharePoint</span>.</td></tr>
+                <tr><td>Le contrôle s'est arrêté&nbsp;: coupure de courant, PC éteint</td><td>Rouvrez l'application, puis <span class="ui">Nouveau contrôle</span>, «&nbsp;Contrôles interrompus&nbsp;», <span class="ui">Reprendre</span>.</td></tr>
+                <tr><td>La barre n'avance plus</td><td>C'est normal pendant l'attente d'un lot. Ne fermez pas l'application.</td></tr>
+                <tr><td>«&nbsp;Tous les PDF de ce dossier ont déjà été contrôlés&nbsp;»</td><td>Il n'y a rien de nouveau. Cochez <span class="ui">Recontrôler aussi les dossiers déjà contrôlés</span> seulement si vous voulez tout refaire.</td></tr>
+                <tr><td>Un dossier reste en «&nbsp;Erreur&nbsp;» après une reprise</td><td>Ouvrez le PDF&nbsp;: il est sans doute abîmé ou protégé. Demandez un nouveau scan.</td></tr>
+                <tr><td>Beaucoup de «&nbsp;Commercial non identifié&nbsp;»</td><td>Vérifiez la rubrique «&nbsp;Liste des commerciaux&nbsp;»&nbsp;: le fichier est peut-être absent ou incomplet.</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="carte guide-section" id="g-confidentialite">
+            <h2>Confidentialité</h2>
+            <ul>
+              <li>La reconnaissance des pages et la lecture des QR codes se font sur cet ordinateur.</li>
+              <li>Seules les pages utiles sont transmises à Claude, par connexion chiffrée&nbsp;: la fiche, la pièce d'identité, la dernière page du RCCM, la page de signature du contrat et les pages que l'application n'a pas reconnues. Le RCCM et l'IFU entiers ne sont transmis que si leur QR code n'a pas pu être lu.</li>
+              <li>Les résultats et le fichier Excel restent sur cet ordinateur.</li>
+              <li>La clé API est chiffrée avec votre compte Windows.</li>
+            </ul>
+          </section>
+        </div>
       </div>
     </section>
   </main>

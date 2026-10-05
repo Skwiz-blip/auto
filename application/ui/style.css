@@ -273,3 +273,36 @@ td.commercial { color: var(--encre-2); white-space: nowrap; }
 tr.groupe td { background: var(--bleu-clair); color: var(--bleu-fonce); padding: 8px 12px; cursor: default; }
 tr.groupe span { margin-left: 10px; color: var(--encre-2); font-size: 12.5px; }
 tbody tr.groupe:hover { background: var(--bleu-clair); }
+
+/* ---------- guide d'utilisation ---------- */
+.guide-section { padding: 22px 24px; }
+.guide-section h2 { font-size: 18px; margin-bottom: 12px; }
+.guide-section h3 { font-size: 14px; font-weight: 600; margin: 20px 0 8px; }
+.guide-section p, .guide-section ul, .guide-section ol { margin: 0 0 10px; color: var(--encre-2); max-width: 76ch; }
+.guide-section ul { padding-left: 20px; }
+.guide-section li { margin-bottom: 6px; }
+.guide-section strong { color: var(--encre); }
+.guide-section > :last-child { margin-bottom: 0; }
+.guide-section .statut { vertical-align: 1px; }
+/* nom d'un bouton ou d'un menu de l'application */
+.ui { display: inline-block; padding: 0 7px; border: 1px solid var(--bord-fort); border-radius: 6px;
+      background: var(--surface); color: var(--encre); font-weight: 600; font-size: 13px; white-space: nowrap; }
+ol.pas { list-style: none; padding: 0; counter-reset: pas; }
+ol.pas li { counter-increment: pas; position: relative; padding-left: 38px; margin-bottom: 10px; min-height: 26px; }
+ol.pas li::before {
+  content: counter(pas); position: absolute; left: 0; top: -2px; width: 26px; height: 26px;
+  border-radius: 50%; background: var(--bleu-clair); color: var(--bleu-fonce);
+  display: grid; place-items: center; font-weight: 700; font-size: 13px;
+}
+.note { border-left: 3px solid var(--bleu); background: var(--bleu-voile); border-radius: 0 8px 8px 0;
+        padding: 10px 14px; margin: 14px 0; }
+.note.attention { border-left-color: var(--attention); background: var(--attention-fond); }
+.guide-section table { margin: 4px 0 14px; border: 1px solid var(--bord); border-radius: 8px;
+                       border-collapse: separate; border-spacing: 0; overflow: hidden; }
+.guide-section tbody tr { cursor: default; }
+.guide-section tbody tr:hover { background: none; }
+.guide-section td { color: var(--encre-2); }
+.guide-section td:first-child { color: var(--encre); font-weight: 600; width: 32%; }
+.chemin-donnees { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.guide-section code { font: 13px Consolas, "Cascadia Mono", monospace; background: var(--surface);
+                      border: 1px solid var(--bord); border-radius: 6px; padding: 3px 8px; word-break: break-all; color: var(--encre); }

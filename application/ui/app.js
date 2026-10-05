@@ -33,6 +33,7 @@ function allerA(vue) {
   if (vue === "tableau") chargerLancements();
   if (vue === "lancer") afficherInterrompus();
   if (vue === "parametres") afficherParametres();
+  if (vue === "aide") afficherAide();
 }
 document.querySelectorAll(".lien").forEach((l) => l.addEventListener("click", () => allerA(l.dataset.vue)));
 document.querySelectorAll("[data-aller]").forEach((b) => b.addEventListener("click", () => allerA(b.dataset.aller)));
@@ -309,8 +310,7 @@ function majEstimation() {
   const minutes = Math.max(2, Math.round(etat.nbTraites * c.minutes));
   const duree = minutes >= 90 ? `${nombre.format(Math.round(minutes / 6) / 10)} h` : `${minutes} min`;
   $("estimation").innerHTML = `<strong>${nombre.format(etat.nbTraites)} dossiers</strong> · lecture sur ce PC
-    <strong>~${duree}</strong>, puis réponses de Claude par lots (en général moins d'une heure,
-    24 h au plus). Idéal la nuit : laissez le PC allumé.`;
+    <strong>~${duree}</strong>`;
 }
 
 function afficherDossier(r) {
@@ -466,6 +466,72 @@ $("enregistrer-moteur").addEventListener("click", async () => {
   await api().enregistrer("", $("moteur").value);
   afficherParametres();
 });
+
+/* ---------------------------------------------------------------- guide d'utilisation */
+
+const sansAccents = (t) => t.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+
+function preparerGuide() {
+  const sections = [...document.querySelectorAll(".guide-section")];
+  const sommaire = $("guide-sommaire");
+  // les pastilles de décision du guide sont celles du tableau de bord
+  document.querySelectorAll("#vue-aide [data-statut]").forEach((e) => (e.outerHTML = pilule(e.dataset.statut)));
+  // sommaire tiré des titres des rubriques : il reste juste si une rubrique change
+  sommaire.innerHTML = sections.map((s) =>
+    `<button type="button" data-cible="${s.id}">${echapper(s.querySelector("h2").textContent)}</button>`).join("");
+  const boutons = [...sommaire.querySelectorAll("button")];
+  boutons.forEach((b) => b.addEventListener("click", () =>
+    $(b.dataset.cible).scrollIntoView({ behavior: "smooth", block: "start" })));
+
+  // rubrique en cours de lecture, surlignée dans le sommaire
+  const zone = document.querySelector("main");
+  let attente = false;
+  const surligner = () => {
+    attente = false;
+    const visibles = sections.filter((s) => !s.hidden);
+    const courante = visibles.filter((s) => s.getBoundingClientRect().top < 160).pop() || visibles[0];
+    boutons.forEach((b) => b.classList.toggle("actif", !!courante && b.dataset.cible === courante.id));
+  };
+  zone.addEventListener("scroll", () => {
+    if (attente || $("vue-aide").hidden) return;
+    attente = true;
+    requestAnimationFrame(surligner);
+  });
+
+  // recherche : seules les rubriques qui contiennent les mots restent affichées
+  $("guide-recherche").addEventListener("input", (e) => {
+    const mots = sansAccents(e.target.value).split(/\s+/).filter(Boolean);
+    let restantes = 0;
+    sections.forEach((s, k) => {
+      const texte = sansAccents(s.textContent);
+      s.hidden = boutons[k].hidden = !mots.every((m) => texte.includes(m));
+      restantes += !s.hidden;
+    });
+    $("guide-aucun").hidden = restantes > 0;
+    surligner();
+  });
+  $("g-ouvrir-donnees").addEventListener("click", () => api().ouvrir_sortie(etat.config.donnees));
+  surligner();
+}
+
+async function afficherAide() {
+  if (!preparerGuide.fait) { preparerGuide(); preparerGuide.fait = true; }
+  if (!etat.config) await rafraichirConfig();
+  const c = etat.config;
+  $("g-donnees").textContent = c.donnees;
+  document.querySelectorAll(".g-max").forEach((e) => (e.textContent = c.max_dossiers));
+  // liste réellement chargée par le programme : montre tout de suite un fichier absent ou vide
+  const r = await api().commerciaux();
+  const n = r.liste.length;
+  $("g-commerciaux-etat").textContent = n
+    ? `${n} commerci${n > 1 ? "aux reconnus" : "al reconnu"}.`
+    : (r.present ? "Le fichier « NOM DES COMMERCIAUX.xlsx » est vide ou illisible : aucun commercial n'est reconnu."
+                 : "Le fichier « NOM DES COMMERCIAUX.xlsx » est introuvable dans le dossier de vos fichiers : aucun commercial n'est reconnu.");
+  $("g-commerciaux-etat").className = n ? "" : "alerte";
+  $("g-commerciaux-table").hidden = !n;
+  $("g-commerciaux-liste").innerHTML = r.liste.map((x) =>
+    `<tr><td>${echapper(x.nom)}</td><td>${echapper(x.departement) || "–"}</td></tr>`).join("");
+}
 
 /* ---------------------------------------------------------------- démarrage */
 
