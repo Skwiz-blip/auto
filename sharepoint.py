@@ -55,7 +55,7 @@ def ligne(journal: dict, date_transmission: str) -> list:
     numero = _contact(fiche, pid, rccm, ifu)
     contact = ("229" + numero) if numero else re.sub(r"[^\d?]", "", fiche["telephone"])
     ville = referentiel.commune(fiche["ville"])
-    return [
+    valeurs = [
         date_transmission,                                                   # A
         structure,                                                           # B STRUCTURE
         referentiel.nombre_comptes(fiche["nombre_head"], 1),          # C PRINCIPAL : 0 ou 1
@@ -69,6 +69,8 @@ def ligne(journal: dict, date_transmission: str) -> list:
         referentiel.commercial(fiche["commercial"]),  # O : nom de la liste officielle, ou vide
         "",                                                                  # P (laissé vide)
     ]
+    # KIK : tout le fichier en majuscules (« Bernard DOVONOU » -> « BERNARD DOVONOU »)
+    return [v.upper() if isinstance(v, str) else v for v in valeurs]
 
 
 def _derniere_ligne(feuille) -> int:
