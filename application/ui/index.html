@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Contrôle des dossiers marchands</title>
+  <title>KYM — Contrôle des dossiers marchands</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="barre">
     <div class="marque"> 
       <div>
-        <strong>Contrôle</strong>
-        <small>Dossiers marchands</small>
+        <strong>KYM</strong>
+        <small>Contrôle des dossiers marchands</small>
       </div>
     </div>
     <nav>
@@ -252,10 +252,12 @@
             <ul>
               <li>La fiche de création marchand, remplie à la main.</li>
               <li>Le RCCM, avec ses deux pages.</li>
-              <li>L'attestation IFU. Une carte professionnelle ou une attestation CNSS est acceptée si le numéro IFU y figure.</li>
+              <li>L'attestation IFU. Une attestation CNSS est acceptée si le numéro IFU y figure. Une carte professionnelle (APIEx) est acceptée si elle n'est pas expirée, si le numéro IFU y figure et si son numéro RCCM est celui du RCCM.</li>
               <li>Une pièce d'identité en cours de validité&nbsp;: CIP, CNI, carte CEDEAO, passeport…</li>
               <li>Le contrat Celtiis Cash, signé par le marchand.</li>
             </ul>
+            <h3>Comment nommer le PDF</h3>
+            <p>Le fichier porte exactement le nom commercial inscrit sur le RCCM. Seul ajout accepté&nbsp;: le numéro du point de vente, pour une structure enregistrée plusieurs fois («&nbsp;AMLIHO 1&nbsp;», «&nbsp;AMLIHO 2&nbsp;»). Tout autre ajout fait rejeter le dossier&nbsp;: date ou heure du scan, chiffres ajoutés par le scanner («&nbsp;_014427&nbsp;»), «&nbsp;(1)&nbsp;», numéro devant le nom, texte après une virgule.</p>
           </section>
 
           <section class="carte guide-section" id="g-demarrer">
@@ -291,7 +293,7 @@
               <li><strong>Les dossiers déjà contrôlés sont sautés tout seuls.</strong> Un PDF corrigé puis renvoyé sous le même nom est contrôlé de nouveau, car le fichier a changé.</li>
               <li>La case <span class="ui">Recontrôler aussi les dossiers déjà contrôlés</span> force un nouveau contrôle de tous les PDF. Ce contrôle est facturé une seconde fois, et les dossiers validés sont ajoutés une seconde fois au fichier Excel.</li>
             </ul>
-            <p class="note attention">Laissez l'ordinateur allumé et l'application ouverte jusqu'à la fin. Le soir est le meilleur moment pour lancer.</p>
+            <p class="note attention">Laissez l'ordinateur allumé et l'application ouverte jusqu'à la fin.</p>
             <p><button class="btn" type="button" data-aller="lancer">Ouvrir «&nbsp;Nouveau contrôle&nbsp;»</button></p>
           </section>
 
@@ -317,11 +319,12 @@
             <h2>Lire les résultats</h2>
             <p>Tout se lit dans le <span class="ui">Tableau de bord</span>.</p>
             <ul>
-              <li><strong>La liste en haut à droite</strong> choisit le contrôle affiché, du plus récent au plus ancien.</li>
-              <li><strong>Les indicateurs</strong> donnent le nombre de dossiers contrôlés, validés, à vérifier et rejetés, et la durée.</li>
-              <li><strong>Les deux graphiques</strong> montrent les motifs de rejet et les raisons des vérifications les plus fréquents.</li>
+              <li><strong>La liste en haut à droite</strong> choisit le contrôle affiché, du plus récent au plus ancien. Son premier choix, «&nbsp;Tous les contrôles&nbsp;», réunit tous les lancements&nbsp;: ce sont les statistiques d'ensemble.</li>
+              <li><strong>Les indicateurs</strong> donnent le nombre de dossiers contrôlés, validés, à vérifier et rejetés, et la durée (cumulée pour tous les contrôles).</li>
+              <li><strong>Les deux graphiques</strong> montrent les motifs de rejet et les raisons des vérifications les plus fréquents, en nombre de dossiers et en part. Un dossier peut avoir plusieurs motifs.</li>
               <li><strong>Le tableau «&nbsp;Dossiers&nbsp;»</strong> liste chaque dossier avec sa décision, son commercial et la raison.</li>
             </ul>
+            <p class="note">Dans «&nbsp;Tous les contrôles&nbsp;», un PDF contrôlé plusieurs fois ne compte qu'une fois, avec son dernier résultat. Les boutons <span class="ui">Ranger les PDF</span> et <span class="ui">Fichier SharePoint</span> y sont masqués&nbsp;: ils se font contrôle par contrôle.</p>
             <h3>Trouver un dossier</h3>
             <ul>
               <li>Les boutons <span class="ui">Tous</span>, <span class="ui">Validés</span>, <span class="ui">À vérifier</span>, <span class="ui">Rejetés</span> filtrent par décision.</li>
@@ -330,7 +333,7 @@
               <li>Le champ de recherche trouve un dossier par son nom ou par son commercial.</li>
             </ul>
             <h3>Voir le détail</h3>
-            <p>Cliquez sur une ligne. Le panneau de droite donne les motifs de rejet, les points à vérifier et les données lues. Le bouton <span class="ui">Ouvrir le PDF</span> ouvre le dossier d'origine.</p>
+            <p>Cliquez sur une ligne. Le panneau de droite donne les motifs de rejet, les points à vérifier, les données lues et la date du contrôle. Le bouton <span class="ui">Ouvrir le PDF</span> ouvre le dossier d'origine.</p>
             <p class="note">Dans la colonne «&nbsp;RCCM / IFU&nbsp;», <span class="badge officiel">QR officiel</span> signifie que les données viennent du registre de l'État&nbsp;: elles font foi. <span class="badge">Lecture du scan</span> signifie que le QR code était absent ou illisible, et que le document a été lu sur l'image.</p>
           </section>
 
@@ -350,32 +353,36 @@
             <table>
               <thead><tr><th>Motif</th><th>Quand il est appliqué</th></tr></thead>
               <tbody>
-                <tr><td>Pdf mal nommé</td><td>Le nom du fichier n'est pas le nom commercial inscrit sur le RCCM.</td></tr>
+                <tr><td>Pdf mal nommé</td><td>Le nom du fichier n'est pas le nom commercial du RCCM, ou porte un ajout autre que le numéro du point de vente (voir «&nbsp;Comment nommer le PDF&nbsp;»).</td></tr>
                 <tr><td>Id expiré</td><td>La date d'expiration de la pièce d'identité est passée. La pièce est valide jusqu'au jour d'expiration inclus.</td></tr>
                 <tr><td>Photo illisible sur la pièce</td><td>La photo est absente ou le visage n'est pas reconnaissable.</td></tr>
-                <tr><td>Pièce floue</td><td>Le nom ou la date d'expiration de la pièce d'identité est illisible.</td></tr>
-                <tr><td>RCCM illisible</td><td>Le numéro du RCCM ou le nom du titulaire est illisible.</td></tr>
-                <tr><td>RCCM non conforme</td><td>Le nom sur le RCCM ou l'IFU diffère de la pièce d'identité. Le nom de la structure ou du représentant écrit sur la fiche diffère du RCCM. Le cachet du greffe ou la date de délivrance manque.</td></tr>
-                <tr><td>Dossier incomplet</td><td>Une pièce manque. Une case obligatoire de la fiche est vide. Le contrat n'est pas signé ou sa page de signature manque. La carte professionnelle ne porte pas de numéro IFU.</td></tr>
+                <tr><td>Pièce floue</td><td>La pièce d'identité est floue, coupée ou trop sombre, ou son nom ou sa date d'expiration est illisible.</td></tr>
+                <tr><td>RCCM illisible</td><td>Le RCCM est flou, ou son numéro ou le nom du titulaire est illisible.</td></tr>
+                <tr><td>RCCM non conforme</td><td>Le nom sur le RCCM ou l'IFU diffère de la pièce d'identité. Le nom de la structure ou du représentant écrit sur la fiche diffère du RCCM. Le cachet du greffe ou la date de délivrance manque. Le numéro RCCM de l'IFU ou de la carte professionnelle diffère de celui du RCCM, les deux venant du registre officiel.</td></tr>
+                <tr><td>Dossier incomplet</td><td>Une pièce manque. Une case obligatoire de la fiche est vide&nbsp;: nom de la structure, représentant légal, numéro personnel, ville, «&nbsp;Demandé par&nbsp;». Le contrat est absent, non signé, ou sa page de signature manque. La carte professionnelle ne porte pas de numéro IFU ou est expirée.</td></tr>
               </tbody>
             </table>
 
             <h3>Pourquoi un dossier passe «&nbsp;à vérifier&nbsp;»</h3>
             <ul>
-              <li>Une case de la fiche est illisible. L'application ne devine jamais une écriture.</li>
-              <li>Un seul caractère diffère entre deux noms&nbsp;: faute du commercial ou erreur de lecture.</li>
+              <li>Une case de la fiche est illisible&nbsp;: l'application ne devine jamais une écriture.</li>
+              <li>Un seul caractère diffère entre deux noms (fiche, RCCM, IFU, pièce d'identité, nom du PDF)&nbsp;: faute du commercial ou erreur de lecture.</li>
+              <li>Un nom n'a pu être lu qu'avec un doute, par exemple sur un RCCM sans QR code lisible.</li>
               <li>Le commercial écrit après «&nbsp;Demandé par&nbsp;» n'est pas dans la liste officielle.</li>
-              <li>Deux lectures de la date d'expiration ou de la photo se contredisent.</li>
-              <li>Le même RCCM apparaît dans plusieurs dossiers, ou le fichier est nommé comme une copie.</li>
+              <li>Deux lectures de la date d'expiration ou de la photo de la pièce d'identité se contredisent.</li>
+              <li>La date de délivrance lue sur le RCCM diffère de celle du registre officiel.</li>
+              <li>Le numéro RCCM ou la date d'expiration de la carte professionnelle n'a pas pu être lu ou comparé.</li>
+              <li>Un autre document remplace le RCCM&nbsp;: récépissé d'association, déclaration d'établissement.</li>
               <li>Le greffe a ajouté «&nbsp;Monsieur&nbsp;» ou «&nbsp;Madame&nbsp;» au nom sur le RCCM.</li>
-              <li>Une association fournit un récépissé de déclaration à la place du RCCM.</li>
+              <li>La page de signature du contrat n'a pas été reconnue, ou la signature est douteuse.</li>
             </ul>
 
             <h3>Ce qui est toléré</h3>
             <ul>
               <li>Dans les noms&nbsp;: les espaces, les accents, les majuscules et l'ordre nom et prénoms.</li>
-              <li>Dans le nom du PDF&nbsp;: la forme juridique (ETS, SARL…), un numéro de point de vente à la fin («&nbsp;AMLIHO 2&nbsp;») et l'heure ajoutée par le scanner.</li>
+              <li>Dans le nom du PDF et de la structure sur la fiche&nbsp;: la forme juridique (ETS, SARL…) et le numéro du point de vente à la fin («&nbsp;AMLIHO 1&nbsp;», «&nbsp;AMLIHO 2&nbsp;»), pour une structure enregistrée plusieurs fois. Rien d'autre.</li>
               <li>Un RCCM électronique sans cachet, s'il porte son numéro de référence.</li>
+              <li>Une date de délivrance absente du papier, si le registre officiel la donne&nbsp;; à défaut, la date du tampon du greffe.</li>
             </ul>
           </section>
 
@@ -386,14 +393,14 @@
               <thead><tr><th>Colonne</th><th>D'où vient la valeur</th></tr></thead>
               <tbody>
                 <tr><td>Date de transmission</td><td>Le jour du contrôle.</td></tr>
-                <tr><td>Nom structure</td><td>Le nom commercial du RCCM.</td></tr>
+                <tr><td>Nom structure</td><td>Le nom commercial du RCCM (à défaut, celui de l'IFU ou de la fiche).</td></tr>
                 <tr><td>Principal</td><td>«&nbsp;Nombre de Head&nbsp;» de la fiche&nbsp;: 0 ou 1. Case vide&nbsp;: 1.</td></tr>
                 <tr><td>Sous compte</td><td>«&nbsp;Nombre de sous comptes&nbsp;» de la fiche&nbsp;: 0 ou 1. Case vide&nbsp;: 0.</td></tr>
                 <tr><td>Nom et prénom du promoteur</td><td>Le RCCM. À défaut, la pièce d'identité.</td></tr>
-                <tr><td>Contact</td><td>Le «&nbsp;Numéro personnel&nbsp;» de la fiche, écrit 229 suivi du numéro.</td></tr>
+                <tr><td>Contact</td><td>Le «&nbsp;Numéro personnel&nbsp;» de la fiche, écrit 229 suivi du numéro. S'il est illisible, ou s'il ne diffère que d'un chiffre d'un numéro imprimé (pièce d'identité, RCCM, IFU), le numéro imprimé.</td></tr>
                 <tr><td>Gestionnaire</td><td>Les mêmes nom, prénom et contact que le promoteur.</td></tr>
                 <tr><td>Secteur d'activité</td><td>La fiche.</td></tr>
-                <tr><td>Département</td><td>L'un des départements de la liste des commerciaux.</td></tr>
+                <tr><td>Département</td><td>Celui de la commune s'il figure dans la liste des commerciaux, sinon celui du commercial, sinon celui écrit sur la fiche.</td></tr>
                 <tr><td>Ville / commune</td><td>La ville de la fiche, ramenée à l'une des 77 communes du Bénin.</td></tr>
                 <tr><td>Situation géographique</td><td>Le quartier écrit sur la fiche.</td></tr>
                 <tr><td>Nom du commercial</td><td>«&nbsp;Demandé par&nbsp;», rattaché à la liste officielle.</td></tr>
@@ -402,7 +409,7 @@
             </table>
             <ul>
               <li>Tout le texte est écrit en majuscules.</li>
-              <li><strong>Une case orange est à compléter à la main</strong>&nbsp;: contact incomplet, département ou commercial non reconnu.</li>
+              <li><strong>Une case orange est à compléter à la main</strong>&nbsp;: caractère illisible («&nbsp;?&nbsp;»), contact incomplet, département ou commercial non reconnu.</li>
               <li>Un dossier n'est jamais ajouté deux fois pour un même contrôle.</li>
               <li>Un dossier «&nbsp;à vérifier&nbsp;» que vous validez vous-même est à saisir à la main&nbsp;: l'application n'ajoute que les dossiers qu'elle a validés.</li>
             </ul>
@@ -417,9 +424,9 @@
               <li>«&nbsp;1 - Validés&nbsp;», «&nbsp;2 - À vérifier&nbsp;», «&nbsp;3 - Rejetés&nbsp;» et «&nbsp;4 - Erreurs techniques&nbsp;»&nbsp;;</li>
               <li>dans chacun, un fichier «&nbsp;_motifs.txt&nbsp;» qui donne la raison de chaque dossier, regroupé par commercial.</li>
             </ul>
-            <p>Vos PDF d'origine ne bougent pas. Le bouton <span class="ui">Ranger les PDF</span> refait ce rangement à la demande.</p>
+            <p>Vos PDF d'origine ne bougent pas. Le bouton <span class="ui">Ranger les PDF</span> refait ce rangement à la demande&nbsp;: un PDF dont la décision a changé passe dans son nouveau dossier, et les «&nbsp;_motifs.txt&nbsp;» sont réécrits. Les PDF rangés restent disponibles même si vous retirez les originaux du dossier source.</p>
             <h3>L'export Excel des résultats</h3>
-            <p><span class="ui">Exporter Excel</span> crée «&nbsp;resultats.xlsx&nbsp;» avec deux feuilles&nbsp;: «&nbsp;Résultats&nbsp;», une ligne par dossier, et «&nbsp;Par commercial&nbsp;», le décompte et les dossiers à reprendre de chaque commercial.</p>
+            <p><span class="ui">Exporter Excel</span> crée «&nbsp;resultats.xlsx&nbsp;» avec deux feuilles&nbsp;: «&nbsp;Résultats&nbsp;», une ligne par dossier, et «&nbsp;Par commercial&nbsp;», le décompte et les dossiers à reprendre de chaque commercial. Dans «&nbsp;Tous les contrôles&nbsp;», le fichier s'appelle «&nbsp;resultats de tous les controles.xlsx&nbsp;» et se trouve dans le dossier «&nbsp;sorties&nbsp;».</p>
             <p><span class="ui">Ouvrir le dossier</span> ouvre le dossier technique du contrôle affiché.</p>
           </section>
 
@@ -439,21 +446,6 @@
               <thead><tr><th>Commercial</th><th>Département</th></tr></thead>
               <tbody id="g-commerciaux-liste"></tbody>
             </table>
-          </section>
-
-          <section class="carte guide-section" id="g-conseils">
-            <h2>Conseils pour limiter les rejets</h2>
-            <p>À transmettre aux commerciaux. La plupart des rejets viennent de ces points.</p>
-            <ul>
-              <li><strong>Nommez le PDF exactement comme le nom commercial du RCCM.</strong></li>
-              <li><strong>Scannez toutes les pages, bien à plat et nettes</strong>&nbsp;: les deux pages du RCCM et la page de signature du contrat sont souvent oubliées.</li>
-              <li><strong>Remplissez toutes les cases de la fiche</strong>, en lettres capitales lisibles.</li>
-              <li><strong>Écrivez le nom de la structure et celui du représentant comme sur le RCCM</strong>, sans initiale ni prénom en moins.</li>
-              <li><strong>Écrivez 1 ou 0</strong> pour le nombre de Head et de sous-comptes.</li>
-              <li><strong>Écrivez votre nom après «&nbsp;Demandé par&nbsp;»</strong> comme il figure dans la liste des commerciaux.</li>
-              <li><strong>Vérifiez la date d'expiration</strong> de la pièce d'identité avant d'envoyer.</li>
-              <li><strong>Gardez le QR code du RCCM et de l'IFU bien net</strong>&nbsp;: il permet de vérifier le document auprès de l'État.</li>
-            </ul>
           </section>
 
           <section class="carte guide-section" id="g-problemes">

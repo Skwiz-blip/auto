@@ -17,6 +17,8 @@ python -m pip install --quiet -r ..\requirements.txt
 python -c "from rapidocr import RapidOCR; RapidOCR()" >nul 2>&1 || (echo [X] Modeles PP-OCR indisponibles. & pause & exit /b 1)
 
 echo [3/4] Application (PyInstaller)...
+rem ancienne application compilée sous son ancien nom
+if exist "dist\Controle KIK" rmdir /s /q "dist\Controle KIK"
 python -m PyInstaller --noconfirm --clean --distpath dist --workpath tmp\build controle_kik.spec
 if errorlevel 1 (echo [X] PyInstaller a echoue. & pause & exit /b 1)
 
@@ -26,5 +28,5 @@ if errorlevel 1 (echo [X] Inno Setup a echoue. & pause & exit /b 1)
 
 rmdir /s /q tmp
 echo.
-echo Termine : installateur\sortie\Setup-Controle-KIK.exe
+echo Termine : installateur\sortie\Setup-KYM.exe
 pause

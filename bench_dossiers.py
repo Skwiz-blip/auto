@@ -87,7 +87,10 @@ SCHEMA = _obj({
     "ifu": _obj({k: S for k in [
         "numero", "nom", "prenoms", "nom_etablissement", "categorie",
         "adresse", "rccm", "regime_fiscal", "centre_impots",
-        "date_emission", "telephone", "document_substitut"]} | {"cachet_dgi": B}),
+        "date_emission", "telephone", "document_substitut", "date_expiration"]} | {
+        "cachet_dgi": B,
+        # dates lues sur la carte professionnelle par la lecture locale (rempli par le programme)
+        "dates_carte": STR_LIST}),
     "piece_identite": _obj({k: S for k in [
         "type", "numero", "nom", "prenoms", "date_naissance",
         "lieu_naissance", "nationalite", "date_expiration", "telephone"]} | {
@@ -158,6 +161,9 @@ Règles de saisie :
   à partir de ce document. S'il n'y a ni attestation ni substitut, document_substitut = "".
   Même principe pour une attestation CNSS (« Numéro d'immatriculation employeur ») : son
   matricule commence par le n° IFU (13 premiers chiffres).
+  Pour une carte professionnelle, ifu.date_expiration = la date « Expire le » de la carte,
+  recopiée telle qu'imprimée au format JJ/MM/AAAA ; "" si elle n'y figure pas ou est
+  illisible.
 - rccm : seulement un extrait du registre du commerce. Une association / ONG fournit un
   récépissé de déclaration : mets pieces.rccm.presente = false et rccm.document_substitut =
   "Récépissé de déclaration d'ONG".
@@ -326,19 +332,23 @@ def _rccm(value: str) -> str:
 
 
 FORMES_JURIDIQUES = r"^(ETS|ETABLISSEMENTS?|STE|SOCIETE|SARL|SARLU|SA|SAS|GIE)"
-# suffixes de copie : "-1(2)", "(1)", " - Copie", "- Copie (2)"
-COPIE = re.compile(r"\s*-\s*\d+\s*(\(\d+\))?\s*$|\s*\(\d+\)\s*$|\s*-?\s*\bCOPIE\b.*$", re.IGNORECASE)
-# ajouts courants au nom du fichier, sans rapport avec la structure :
-# horodatage du scan (« 26-09-2026 14.48 », « _092215 »), lieu après une virgule,
-# numéro de point de vente (« AMLIHO 2 »)
-AJOUTS_FICHIER = [
-    re.compile(r"\s*\d{1,2}-\d{1,2}-\d{2,4}\s*\d{1,2}[.:h]\d{2}\s*$"),
-    re.compile(r"[\s._-]*_\d{4,6}$"),
-    re.compile(r"\s*,.*$"),
-    re.compile(r"\s+\d{1,2}$"),
-    re.compile(r"(?<=[A-Za-zÀ-ÿ])\d$"),          # numéro collé : « SAGJ GSM PRO1 »
-    re.compile(r"\s+PRIME(\s+\d+)?$", re.IGNORECASE),  # « TRAORE ET FILS PRIME »
+# Règle KIK : le nom du PDF est le nom de la structure, celui du RCCM. Seul ajout toléré : le
+# numéro du point de vente d'une structure enregistrée plusieurs fois (« AMLIHO 1 »,
+# « AMLIHO 2 » ; « FILS1 » aussi, les espaces étant tolérés)
+NUMERO_POINT = re.compile(r"(?<!\d)[\s-]*\d{1,2}[\s.]*$")
+# ajouts reconnus, rejetés avec leur cause (ils ne peuvent pas venir d'une erreur de lecture)
+AJOUTS_INTERDITS = [
+    (re.compile(r"^\s*\d{1,3}\s*[-_.]\s*(?=\D)"), "numéro ajouté devant le nom"),
+    (re.compile(r"\d{1,2}-\d{1,2}-\d{2,4}\s*\d{1,2}[.:h]\d{2}"), "date et heure du scan ajoutées"),
+    (re.compile(r"_\d{4,6}\s*$"), "horodatage du scanner ajouté"),
+    (re.compile(r"\(\d+\)|\bcopie\b", re.IGNORECASE), "fichier nommé comme une copie"),
+    (re.compile(r","), "texte ajouté après une virgule"),
 ]
+
+
+def sans_numero_point(nom: str) -> str:
+    """Nom sans le numéro de point de vente final : « AMLIHO 2 » -> « AMLIHO »."""
+    return NUMERO_POINT.sub("", nom).strip(" ._-") or nom
 
 
 def nom_valide(v: str) -> bool:
@@ -354,16 +364,27 @@ def meme_rccm(a: str, b: str) -> bool:
     return x == y or (min(len(x), len(y)) >= 9 and (x.startswith(y) or y.startswith(x)))
 
 
-def nettoyer_nom_fichier(nom: str) -> str:
-    """Nom du PDF ramené au seul nom de la structure."""
-    avant = None
-    while avant != nom:
-        avant = nom
-        nom = COPIE.sub("", nom)
-        for motif in AJOUTS_FICHIER:
-            nom = motif.sub("", nom)
-        nom = nom.strip(" ._-")
-    return nom
+def _plus_deux_ans(d: date) -> date:
+    try:
+        return d.replace(year=d.year + 2)
+    except ValueError:  # 29 février
+        return d.replace(year=d.year + 2, day=28)
+
+
+def numeros_rccm_concordants(a: str, b: str) -> bool | None:
+    """Même numéro RCCM sous deux écritures (« RB/LKS/17A411 » / « RB LOKOSSA / 2017- A - 411 »,
+    « 5808-A » / « RCCM 5808 A ») ; None si l'un des deux manque."""
+    if not re.search(r"\d", a or "") or not re.search(r"\d", b or ""):
+        return None
+    if meme_rccm(a, b):
+        return True
+    # anciens formats : même numéro d'ordre (dernier nombre) et, s'il figure, même millésime
+    x, y = re.findall(r"\d+", a), re.findall(r"\d+", b)
+    if x[-1].lstrip("0") != y[-1].lstrip("0"):
+        return False
+    annees_x = {n[-2:] for n in x[:-1] if len(n) in (2, 4)}
+    annees_y = {n[-2:] for n in y[:-1] if len(n) in (2, 4)}
+    return not (annees_x and annees_y) or bool(annees_x & annees_y)
 
 
 CIVILITES = {"MONSIEUR", "MADAME", "MADEMOISELLE", "MME", "MLLE", "MR", "M"}
@@ -461,21 +482,60 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
             rejet(motif, quoi)
 
     # ---- Pièces présentes et lisibles --------------------------------------------------
-    # carte APIEx à la place de l'attestation IFU : acceptée si le numéro IFU y figure
+    # carte professionnelle (APIEx) à la place de l'attestation IFU : acceptée si le numéro IFU
+    # y figure et si son numéro RCCM est celui du RCCM (règle KIK)
     substitut_ifu = ifu["document_substitut"].strip() or (
         "Carte professionnelle APIEx" if "APIEX" in pieces["ifu"]["remarque"].upper() else "")
     numero_ifu = re.sub(r"\D", "", ifu["numero"])
+    carte_pro = bool(re.search(r"PROFESSIONNELLE|APIEX", substitut_ifu.upper()))
+
+    def validite_carte():
+        """Carte professionnelle expirée : elle ne remplace plus l'attestation IFU (règle KIK).
+        Sans la mention « Expire le », la date la plus récente lue sur la carte suffit : la
+        carte vaut deux ans (émission, puis expiration deux ans plus tard)."""
+        expire = _date(ifu.get("date_expiration", ""))
+        dates = [d for d in map(_date, ifu.get("dates_carte") or []) if d]
+        if expire is None and dates:
+            recente = max(dates)
+            if recente >= date_traitement:
+                expire = recente  # une date à venir ne peut être que l'expiration
+            elif _plus_deux_ans(recente) <= date_traitement:
+                rejet(M_INCOMPLET, f"carte professionnelle expirée : date la plus récente lue "
+                                   f"{recente:%d/%m/%Y}, plus de deux ans (validité de la carte)")
+                return
+        if expire is None:
+            vigilance.append("Date d'expiration de la carte professionnelle non lue, à "
+                             "confirmer")
+        elif expire < date_traitement:
+            rejet(M_INCOMPLET, f"carte professionnelle expirée le {expire:%d/%m/%Y} : elle ne "
+                               "remplace plus l'attestation IFU")
+
     for p in PIECES:
         if p == "ifu" and not pieces[p]["presente"] and substitut_ifu:
-            if len(numero_ifu) == 13:
+            if len(numero_ifu) != 13:
+                rejet(M_INCOMPLET, f"{substitut_ifu} sans numéro IFU, à la place de "
+                                   "l'attestation IFU")
+            elif not carte_pro:
                 particuliers.append(f"{substitut_ifu} à la place de l'attestation IFU "
                                     f"(numéro IFU {numero_ifu} présent)")
             else:
-                rejet(M_INCOMPLET, f"{substitut_ifu} sans numéro IFU, à la place de "
-                                   "l'attestation IFU")
+                concordance = numeros_rccm_concordants(ifu["rccm"], rccm["numero"])
+                if concordance:
+                    particuliers.append(f"{substitut_ifu} à la place de l'attestation IFU : "
+                                        f"numéro IFU {numero_ifu}, numéro RCCM conforme au RCCM")
+                elif concordance is None:
+                    vigilance.append(f"{substitut_ifu} à la place de l'attestation IFU : numéro "
+                                     "RCCM absent de la carte ou du RCCM, à comparer")
+                elif {"rccm", "ifu"} <= set(sources_officielles):
+                    rejet(M_RCCM_NON_CONFORME, f"numéro RCCM de la carte professionnelle "
+                                               f"({ifu['rccm']}) différent du RCCM ({rccm['numero']})")
+                else:
+                    vigilance.append(f"Numéro RCCM de la carte professionnelle ({ifu['rccm']}) "
+                                     f"différent du RCCM ({rccm['numero']}) : lecture à confirmer")
+                validite_carte()
         elif p == "rccm" and not pieces[p]["presente"] and rccm["document_substitut"].strip():
-            vigilance.append(f"{rccm['document_substitut']} à la place du RCCM (association : "
-                             "décision humaine)")
+            vigilance.append(f"{rccm['document_substitut']} à la place du RCCM (décision "
+                             "humaine)")
         elif not pieces[p]["presente"]:
             rejet(M_INCOMPLET, f"{PIECE_LABELS[p]} absent(e)")
         elif not pieces[p]["lisible"] and p not in sources_officielles:
@@ -533,14 +593,25 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
                            or douteux("ifu", "nom_etablissement")
                            or any("?" in n for n in noms_imprimes))
     attendu = " / ".join(noms_imprimes)
-    fichier = nettoyer_nom_fichier(nom_fichier)
-    if COPIE.search(nom_fichier):
-        vigilance.append(f"Doublon possible : fichier « {nom_fichier} » nommé comme une copie")
+    # seul le numéro de point de vente final est toléré (« AMLIHO 2 ») ; le nom tel quel est
+    # aussi comparé, pour une structure dont le nom finit par un nombre
+    fichier = sans_numero_point(nom_fichier)
+
+    def meme_structure(ecrit: str, imprime: str) -> str:
+        return min((comparer_structures(v, imprime) for v in (ecrit, sans_numero_point(ecrit))),
+                   key=("identique", "lecture", "different").index)
+
     if noms_imprimes:
-        verdicts = {comparer_structures(fichier, n) for n in noms_imprimes}
+        verdicts = {meme_structure(nom_fichier, n) for n in noms_imprimes}
         if "identique" not in verdicts:
-            detail = f"fichier « {nom_fichier} », nom commercial « {attendu} »"
-            if not sur:
+            ajouts = [cause for motif, cause in AJOUTS_INTERDITS if motif.search(nom_fichier)]
+            detail = (f"fichier « {nom_fichier} », nom commercial « {attendu} »"
+                      + (f" ({', '.join(ajouts)})" if ajouts else ""))
+            if ajouts:
+                # ajout au nom (date, horodatage, copie…) : défaut certain, quelle que soit la
+                # lecture du RCCM
+                rejet(M_NOM_PDF, detail)
+            elif not sur:
                 vigilance.append(f"Nom du PDF différent du nom commercial lu sur le scan, "
                                  f"lecture à confirmer ({detail})")
             elif "lecture" in verdicts and not officiel:
@@ -550,7 +621,8 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
                 rejet(M_NOM_PDF, detail)
         structure = fiche["nom_structure"].strip()
         if pieces["fiche"]["presente"] and lisible(structure, "fiche", "nom_structure"):
-            verdicts = {comparer_structures(structure, n) for n in noms_imprimes}
+            # le commercial écrit souvent le numéro du point de vente (« ARC EN CIEL PLUS 2 »)
+            verdicts = {meme_structure(structure, n) for n in noms_imprimes}
             if "identique" not in verdicts:
                 ecart("lecture" if "lecture" in verdicts else "different",
                       f"nom de la structure sur la fiche (« {structure} ») différent du nom "
@@ -678,8 +750,10 @@ def apply_rules(d: dict, date_traitement: date, nom_fichier: str,
                   f"({promoteur_txt})")
 
     # ---- Numéro RCCM cité par l'IFU ------------------------------------------------------
+    # (carte professionnelle à la place de l'IFU : déjà comparée plus haut)
     motif_rccm = re.compile(r"RB\s*/?\s*[A-Z]{2,4}\s*/?\s*\d{2}\s*[A-Z]\s*\d+")
-    if (motif_rccm.search(rccm["numero"].upper()) and motif_rccm.search(ifu["rccm"].upper())
+    if (not (carte_pro and not pieces["ifu"]["presente"])
+            and motif_rccm.search(rccm["numero"].upper()) and motif_rccm.search(ifu["rccm"].upper())
             and not meme_rccm(rccm["numero"], ifu["rccm"])):
         message = (f"numéro RCCM différent entre RCCM ({rccm['numero']}) et IFU "
                    f"({ifu['rccm']})")

@@ -24,6 +24,7 @@ MOTEUR_DEFAUT = ICI.parent  # l'application vit dans AUTO\application
 # s'y ajoute l'attente des lots Claude (Sonnet, -50 %) : en général moins d'une heure, 24 h au plus
 MINUTES_PAR_DOSSIER = 0.4
 STATUTS = ("VALIDÉ", "À VÉRIFIER", "REJETÉ", "ERREUR")
+TOUS = "tous"  # à la place d'un dossier de lancement : tous les lancements réunis
 MAX_DOSSIERS = 50  # par lancement (le moteur ne traite que les 50 premiers PDF)
 SANS_FENETRE = 0x08000000  # CREATE_NO_WINDOW : pas de console noire derrière l'application
 
@@ -131,8 +132,10 @@ def _raison_courte(texte: str) -> str:
         return "Nom du PDF à confirmer"
     if "cachet" in t or "délivrance" in t:
         return "Cachet ou date du RCCM à confirmer"
-    if "apiex" in t:
-        return "Carte APIEx au lieu de l'IFU"
+    if "à la place du rccm" in t:
+        return "Autre document à la place du RCCM"
+    if "carte professionnelle" in t:
+        return "Numéro RCCM de la carte professionnelle à comparer"
     if "expire bientôt" in t:
         return "Pièce d'identité proche de l'expiration"
     if "expiration" in t:
@@ -148,6 +151,14 @@ def _raison_courte(texte: str) -> str:
     if "rccm" in t:
         return "Numéro RCCM à confirmer"
     return "Autre point à vérifier"
+
+
+def _date_lancement(sortie: Path) -> str:
+    """« 06/10/2026 17:10 », d'après le nom du dossier du lancement."""
+    try:
+        return datetime.strptime(sortie.name[9:], "%Y%m%d_%H%M%S").strftime("%d/%m/%Y %H:%M")
+    except ValueError:
+        return sortie.name
 
 
 def _nombre(texte: str) -> float:
@@ -369,11 +380,7 @@ class Api:
             if not journaux:
                 continue
             src = _source(sortie)
-            try:
-                quand = datetime.strptime(sortie.name[9:], "%Y%m%d_%H%M%S")
-                date_txt = quand.strftime("%d/%m/%Y %H:%M")
-            except ValueError:
-                date_txt = sortie.name
+            date_txt = _date_lancement(sortie)
             total = min(MAX_DOSSIERS, len(list(Path(src["dossier"]).glob("*.pdf")))
                         if Path(src["dossier"]).is_dir() else 0)
             liste.append({"sortie": str(sortie), "date": date_txt, "nb": len(journaux),
@@ -386,28 +393,40 @@ class Api:
         return liste
 
     def resultats(self, sortie: str) -> dict:
-        dossier = Path(sortie)
+        """Résultats d'un lancement, ou de tous les lancements réunis (sortie == TOUS)."""
+        cumul = sortie == TOUS
+        dossiers = sorted(chemins.SORTIES.glob("controle_*")) if cumul else [Path(sortie)]
+        # un même PDF contrôlé plusieurs fois ne compte qu'une fois : son dernier résultat
+        derniers, lus = {}, []
+        for dossier in dossiers:
+            journaux = _journaux(dossier)
+            if not journaux:
+                continue
+            lus.append(dossier)
+            # les lancements antérieurs à la reprise n'ont leurs pages que dans resultats.csv
+            anciennes = {}
+            if (dossier / "resultats.csv").exists():
+                import csv
+                with open(dossier / "resultats.csv", encoding="utf-8-sig") as f:
+                    for r in csv.DictReader(f, delimiter=";"):
+                        anciennes[r["dossier"]] = {k: _nombre(v) for k, v in r.items()
+                                                   if k in ("pages", "pages_envoyees")}
+            for k, j in enumerate(journaux):
+                cle = (j["dossier"], j.get("empreinte_pdf") or f"{dossier.name}/{k}")
+                derniers[cle] = (dossier, j, j.get("ligne") or anciennes.get(j["dossier"], {}))
         items, compte, motifs, raisons = [], {s: 0 for s in STATUTS}, {}, {}
         avec_qr = 0
-        # les lancements antérieurs à la reprise n'ont leurs pages que dans resultats.csv
-        anciennes = {}
-        if (dossier / "resultats.csv").exists():
-            import csv
-            with open(dossier / "resultats.csv", encoding="utf-8-sig") as f:
-                for r in csv.DictReader(f, delimiter=";"):
-                    anciennes[r["dossier"]] = {k: _nombre(v) for k, v in r.items()
-                                               if k in ("pages", "pages_envoyees")}
-        for j in _journaux(dossier):
+        for dossier, j, ligne in derniers.values():
             statut = _statut(j)
             compte[statut] += 1
             dec = j.get("decision", {})
             ext = j.get("extraction", {})
-            ligne = j.get("ligne") or anciennes.get(j["dossier"], {})
             cip = ext.get("piece_identite", {})
             officiel = list(j.get("officiel", {}))
             avec_qr += bool(officiel)
-            for b in dec.get("bloquants", []):
-                motifs[b["motif"]] = motifs.get(b["motif"], 0) + 1
+            # nombre de dossiers par motif : un motif ne compte qu'une fois par dossier
+            for motif in {b["motif"] for b in dec.get("bloquants", [])}:
+                motifs[motif] = motifs.get(motif, 0) + 1
             # « Autre » en dernier : les raisons précises d'abord
             familles = sorted({_raison_courte(v) for v in dec.get("vigilance", [])},
                               key=lambda f: (f.startswith("Autre"), f))
@@ -416,6 +435,7 @@ class Api:
                     raisons[f] = raisons.get(f, 0) + 1
             items.append({
                 "dossier": j["dossier"], "statut": statut, "commercial": _commercial(j),
+                "sortie": str(dossier), "controle_le": _date_lancement(dossier),
                 "bloquants": dec.get("bloquants", []), "vigilance": dec.get("vigilance", []),
                 "particuliers": dec.get("particuliers", []), "familles": familles,
                 "erreur": j.get("erreur", ""), "qr": officiel,
@@ -434,14 +454,17 @@ class Api:
             c["total"] += 1
         commerciaux = sorted(commerciaux.items(),
                              key=lambda x: (x[0] == SANS_COMMERCIAL, x[0]))
-        nb = len(items)
-        src = _source(dossier)
-        return {"items": items, "compte": compte, "nb": nb, "commerciaux": commerciaux,
-                "minutes": _minutes(dossier), "avec_qr": avec_qr,
+        durees = [m for m in map(_minutes, lus) if m is not None]
+        src = {} if cumul else _source(dossiers[0])
+        return {"items": items, "compte": compte, "nb": len(items), "commerciaux": commerciaux,
+                "minutes": sum(durees) if durees else None, "avec_qr": avec_qr,
                 "motifs": sorted(motifs.items(), key=lambda x: -x[1]),
                 "raisons": sorted(raisons.items(), key=lambda x: -x[1]),
-                "termine": (dossier / "synthese.txt").exists(),
-                "modele": src.get("modele", ""), "dossier_source": src["dossier"]}
+                "termine": all((d / "synthese.txt").exists() for d in lus),
+                "modele": src.get("modele", ""), "dossier_source": src.get("dossier", ""),
+                "cumul": cumul, "nb_lancements": len(lus),
+                "du": _date_lancement(lus[0])[:10] if lus else "",
+                "au": _date_lancement(lus[-1])[:10] if lus else ""}
 
     def ouvrir_pdf(self, sortie: str, nom: str) -> dict:
         source = Path(_source(Path(sortie))["dossier"])
@@ -452,17 +475,22 @@ class Api:
         return {"ok": False, "message": f"PDF introuvable dans {source}"}
 
     def ouvrir_sortie(self, sortie: str) -> None:
-        os.startfile(sortie)
+        os.startfile(chemins.SORTIES if sortie == TOUS else sortie)
 
     def ranger(self, sortie: str, ouvrir: bool = True) -> dict:
         """Range les PDF du lancement en trois dossiers : Validés, À vérifier, Rejetés.
 
         Les originaux ne bougent pas. Sur le même disque, chaque PDF rangé est un lien
-        physique vers l'original (aucune place en plus) ; sinon, une copie.
+        physique vers l'original (aucune place en plus) ; sinon, une copie. Relancé après un
+        changement de décision, il déplace les PDF déjà rangés vers leur nouveau dossier (ils y
+        restent même si l'original a été retiré du dossier source).
         """
         sortie = Path(sortie)
         source = Path(_source(sortie)["dossier"])
-        pdfs = {p.stem.strip(): p for p in source.glob("*.pdf")}
+        # nom du dossier -> PDF (plusieurs si deux fichiers ne diffèrent que par un espace final)
+        pdfs = {}
+        for p in sorted(source.glob("*.pdf")):
+            pdfs.setdefault(p.stem.strip(), []).append(p)
         try:
             quand = datetime.strptime(sortie.name[9:], "%Y%m%d_%H%M%S").strftime("%Y-%m-%d %Hh%M")
         except ValueError:
@@ -470,19 +498,28 @@ class Api:
         racine = source / f"Tri du {quand}"
         noms = {"VALIDÉ": "1 - Validés", "À VÉRIFIER": "2 - À vérifier",
                 "REJETÉ": "3 - Rejetés", "ERREUR": "4 - Erreurs techniques"}
+        deja = {}
+        for p in sorted(racine.glob("*/*.pdf")):
+            deja.setdefault(p.stem.strip(), []).append(p)
         motifs = {s: {} for s in noms}  # statut -> commercial -> blocs
         compte = {s: 0 for s in noms}
-        manquants = []
+        manquants, utilises = [], set()
         for j in _journaux(sortie):
             statut = _statut(j)
-            pdf = pdfs.get(j["dossier"])
-            if not pdf:
+            # un PDF déjà rangé d'abord (il reste disponible même si l'original a été retiré)
+            candidats = ([p for p in deja.get(j["dossier"], []) if p.name not in utilises]
+                         or [p for p in pdfs.get(j["dossier"], []) if p.name not in utilises])
+            if not candidats:
                 manquants.append(j["dossier"])
                 continue
+            pdf = candidats[0]
+            utilises.add(pdf.name)
             cible_dossier = racine / noms[statut]
             cible_dossier.mkdir(parents=True, exist_ok=True)
             cible = cible_dossier / pdf.name
-            if not cible.exists():
+            if racine in pdf.parents and pdf != cible:
+                pdf.replace(cible)  # décision changée : le PDF change de dossier
+            elif not cible.exists():
                 try:
                     os.link(pdf, cible)
                 except OSError:  # autre disque ou système de fichiers sans liens
@@ -500,7 +537,11 @@ class Api:
                     + "\n"
                     + "".join(f"  - {r}\n" for r in raisons))
         # à côté des PDF, la liste des raisons regroupée par commercial, lisible sans
-        # ouvrir l'application
+        # ouvrir l'application (les listes d'un rangement précédent sont remplacées)
+        for nom in noms.values():
+            (racine / nom / "_motifs.txt").unlink(missing_ok=True)
+            if (racine / nom).is_dir() and not any((racine / nom).iterdir()):
+                (racine / nom).rmdir()
         for statut, par_commercial in motifs.items():
             if not par_commercial:
                 continue
@@ -589,17 +630,18 @@ class Api:
         for ligne in recap.iter_rows(min_row=2):
             for cellule in ligne:
                 cellule.alignment = Alignment(wrap_text=True, vertical="top")
-        fichier = Path(sortie) / "resultats.xlsx"
+        fichier = (chemins.SORTIES / "resultats de tous les controles.xlsx" if sortie == TOUS
+                   else Path(sortie) / "resultats.xlsx")
         try:
             classeur.save(fichier)
         except PermissionError:
-            return {"ok": False, "message": "Fermez resultats.xlsx dans Excel puis réessayez."}
+            return {"ok": False, "message": f"Fermez {fichier.name} dans Excel puis réessayez."}
         os.startfile(fichier)
         return {"ok": True}
 
 
 def moteur_integre() -> None:
-    """Application installée : « Controle KIK.exe --moteur … » fait tourner le moteur de contrôle
+    """Application installée : « KYM.exe --moteur … » fait tourner le moteur de contrôle
     (lancé en arrière-plan par la fenêtre, qui lit sa sortie)."""
     import asyncio
     import io
@@ -624,7 +666,7 @@ def main():
         return
     api = Api()
     fenetre = webview.create_window(
-        "Contrôle des dossiers marchands", url=str(ICI / "ui" / "index.html"), js_api=api,
+        "KYM — Contrôle des dossiers marchands", url=str(ICI / "ui" / "index.html"), js_api=api,
         width=1320, height=860, min_size=(1040, 680), background_color="#FFFFFF")
     api._fenetre = fenetre
     webview.start()

@@ -19,6 +19,7 @@ const STATUTS = {
 };
 const pilule = (s) => `<span class="statut ${STATUTS[s].classe}">${STATUTS[s].icone}${STATUTS[s].libelle}</span>`;
 
+const TOUS = "tous";  // à la place d'un lancement : tous les lancements réunis
 const etat = {
   config: null, lancements: [], sortie: "", donnees: null, filtre: "tous", recherche: "",
   commercial: "", grouper: false,
@@ -85,11 +86,14 @@ async function chargerLancements() {
     return;
   }
   choix.hidden = $("tb-ouvrir").hidden = $("tb-exporter").hidden = $("tb-ranger").hidden = $("tb-sharepoint").hidden = false;
-  if (!etat.lancements.some((l) => l.sortie === etat.sortie)) etat.sortie = etat.lancements[0].sortie;
-  choix.innerHTML = etat.lancements.map((l) => {
-    const suffixe = l.en_cours ? " · en cours" : l.termine ? "" : " · interrompu";
-    return `<option value="${echapper(l.sortie)}">${l.date} · ${nombre.format(l.nb)} dossiers${suffixe}</option>`;
-  }).join("");
+  // vue d'ensemble (tous les lancements réunis) : proposée dès qu'il y en a plusieurs
+  const plusieurs = etat.lancements.length > 1;
+  if (!(plusieurs && etat.sortie === TOUS) && !etat.lancements.some((l) => l.sortie === etat.sortie)) etat.sortie = etat.lancements[0].sortie;
+  choix.innerHTML = (plusieurs ? `<option value="${TOUS}">Tous les contrôles · ${etat.lancements.length} lancements</option>` : "")
+    + etat.lancements.map((l) => {
+      const suffixe = l.en_cours ? " · en cours" : l.termine ? "" : " · interrompu";
+      return `<option value="${echapper(l.sortie)}">${l.date} · ${nombre.format(l.nb)} dossiers${suffixe}</option>`;
+    }).join("");
   choix.value = etat.sortie;
   await chargerResultats();
 }
@@ -116,7 +120,11 @@ async function chargerResultats() {
   etat.donnees = d;
   $("tb-vide").hidden = true;
   $("tb-contenu").hidden = false;
-  $("tb-source").textContent = `Source : ${d.dossier_source}${d.termine ? "" : " — contrôle incomplet"}`;
+  $("tb-source").textContent = d.cumul
+    ? `${d.nb_lancements} lancements, du ${d.du} au ${d.au}${d.termine ? "" : " — un contrôle est incomplet"}`
+    : `Source : ${d.dossier_source}${d.termine ? "" : " — contrôle incomplet"}`;
+  // ranger les PDF et remplir le fichier SharePoint se font lancement par lancement
+  $("tb-ranger").hidden = $("tb-sharepoint").hidden = d.cumul;
 
   const c = d.compte;
   $("k-nb").textContent = nombre.format(d.nb);
@@ -127,12 +135,13 @@ async function chargerResultats() {
   $("k-verif-p").textContent = pourcent(c["À VÉRIFIER"], d.nb);
   $("k-rejet").textContent = nombre.format(c["REJETÉ"]);
   $("k-rejet-p").textContent = pourcent(c["REJETÉ"], d.nb) + (c["ERREUR"] ? ` · ${c["ERREUR"]} en erreur` : "");
-  $("k-duree").textContent = d.minutes != null ? `${nombre.format(Math.round(d.minutes))} min` : "–";
-  $("k-modele").textContent = d.modele ? `Modèle ${d.modele}` : "";
+  $("k-duree").textContent = d.minutes == null ? "–"
+    : d.minutes >= 90 ? `${nombre.format(Math.round(d.minutes / 6) / 10)} h` : `${nombre.format(Math.round(d.minutes))} min`;
+  $("k-modele").textContent = d.cumul ? `${d.nb_lancements} lancements` : d.modele ? `Modèle ${d.modele}` : "";
 
   dessinerRepartition(d);
-  dessinerBarres($("motifs"), d.motifs, "Aucun dossier rejeté.");
-  dessinerBarres($("raisons"), d.raisons, "Aucun dossier à vérifier.");
+  dessinerBarres($("motifs"), d.motifs, "Aucun dossier rejeté.", c["REJETÉ"], "des rejetés");
+  dessinerBarres($("raisons"), d.raisons, "Aucun dossier à vérifier.", c["À VÉRIFIER"], "des dossiers à vérifier");
   dessinerFiltres();
   dessinerChoixCommercial();
   dessinerTable();
@@ -156,7 +165,8 @@ function dessinerRepartition(d) {
     `<li><i class="pastille ${STATUTS[s].classe}"></i>${STATUTS[s].libelle} <strong>${nombre.format(d.compte[s])}</strong> <span>${pourcent(d.compte[s], d.nb)}</span></li>`).join("");
 }
 
-function dessinerBarres(zone, paires, texteVide) {
+// paires : [libellé, nombre de dossiers] ; total : dossiers de la décision concernée (part affichée)
+function dessinerBarres(zone, paires, texteVide, total, deQuoi) {
   if (!paires.length) {
     zone.innerHTML = `<p class="rien">${texteVide}</p>`;
     return;
@@ -167,9 +177,9 @@ function dessinerBarres(zone, paires, texteVide) {
     const ligne = document.createElement("div");
     ligne.className = "barre-ligne";
     ligne.innerHTML = `<span class="barre-lib" title="${echapper(libelle)}">${echapper(libelle)}</span>
-      <span class="barre-piste"><span class="barre-rempli" style="width:${Math.max(2, (82 * n) / max)}%"></span>
-      <span class="barre-val">${nombre.format(n)}</span></span>`;
-    bulle(ligne, `<strong>${echapper(libelle)}</strong> · ${nombre.format(n)} dossier${n > 1 ? "s" : ""}`);
+      <span class="barre-piste"><span class="barre-rempli" style="width:${Math.max(2, (70 * n) / max)}%"></span>
+      <span class="barre-val">${nombre.format(n)} <span class="barre-part">${pourcent(n, total)}</span></span></span>`;
+    bulle(ligne, `<strong>${echapper(libelle)}</strong> · ${nombre.format(n)} dossier${n > 1 ? "s" : ""}, soit ${pourcent(n, total)} ${deQuoi}`);
     zone.appendChild(ligne);
   });
 }
@@ -272,6 +282,7 @@ function ouvrirDetail(i) {
   corps += bloc("Informations", "", i.particuliers.map((p) => `<li>${echapper(p)}</li>`));
   corps += `<div class="bloc"><h3>Données lues</h3><dl class="infos">
       <dt>Commercial</dt><dd>${echapper(i.commercial)}</dd>
+      <dt>Contrôle du</dt><dd>${echapper(i.controle_le)}</dd>
       <dt>Nom sur la CIP</dt><dd>${echapper(i.cip_nom) || "–"}</dd>
       <dt>Expiration CIP</dt><dd>${echapper(i.cip_expiration) || "non confirmée"}</dd>
       <dt>N° RCCM</dt><dd>${echapper(i.rccm) || "–"}</dd>
@@ -292,7 +303,7 @@ $("fermer").addEventListener("click", fermerDetail);
 $("voile").addEventListener("click", fermerDetail);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") fermerDetail(); });
 $("d-pdf").addEventListener("click", async () => {
-  const r = await api().ouvrir_pdf(etat.sortie, etat.detail.dossier);
+  const r = await api().ouvrir_pdf(etat.detail.sortie, etat.detail.dossier);
   if (!r.ok) toast(r.message);
 });
 

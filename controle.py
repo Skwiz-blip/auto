@@ -98,7 +98,8 @@ NON_DEMANDES = {
     "rccm": ("nationalite", "date_naissance", "lieu_naissance", "adresse", "activite",
              "date_debut_exploitation", "registre_date_immatriculation",
              "registre_date_delivrance"),
-    "ifu": ("categorie", "adresse", "regime_fiscal", "centre_impots", "date_emission"),
+    "ifu": ("categorie", "adresse", "regime_fiscal", "centre_impots", "date_emission",
+            "dates_carte"),
     "piece_identite": ("date_naissance", "lieu_naissance", "nationalite"),
     "analyse": ("observations",),
 }
@@ -242,7 +243,8 @@ def socle(ocr: dict) -> tuple[dict, list[str]]:
     for source, cible in (("ifu", "numero"), ("rccm", "rccm"), ("nom", "nom"),
                           ("prenoms", "prenoms"), ("nom_etablissement", "nom_etablissement"),
                           ("categorie", "categorie"), ("regime_fiscal", "regime_fiscal"),
-                          ("centre_impots", "centre_impots"), ("telephone", "telephone")):
+                          ("centre_impots", "centre_impots"), ("telephone", "telephone"),
+                          ("date_expiration", "date_expiration")):
         if ifu.get(source):
             data["ifu"][cible] = ifu[source]
     if "apiex" in officiel:
@@ -260,13 +262,17 @@ def socle(ocr: dict) -> tuple[dict, list[str]]:
                               "prenoms": ("rccm", "prenoms"), "enseigne": ("rccm", "enseigne"),
                               "nom_commercial": ("rccm", "nom_commercial")},
                      "ifu": {"ifu": ("ifu", "numero"), "rccm": ("ifu", "rccm")},
-                     "apiex": {"ifu": ("ifu", "numero"), "rccm": ("ifu", "rccm")},
+                     "apiex": {"ifu": ("ifu", "numero"), "rccm": ("ifu", "rccm"),
+                               "date_expiration": ("ifu", "date_expiration")},
                      "cnss": {"ifu": ("ifu", "numero")},
                      "piece_identite": {"npi": ("piece_identite", "numero"),
                                         "telephone": ("piece_identite", "telephone")},
                      }.get(piece, {}).get(cle)
             if cible and isinstance(valeur, str) and not data[cible[0]][cible[1]]:
                 data[cible[0]][cible[1]] = valeur
+    # toutes les dates lues sur la carte professionnelle (émission, expiration) : sa validité
+    # se déduit même quand la mention « Expire le » n'a pas été lue
+    data["ifu"]["dates_carte"] = list(ocr["champs"].get("apiex", {}).get("dates", []))
     # le papier et le portail doivent désigner le même registre
     local_rccm = ocr["champs"].get("rccm", {}).get("rccm", "")
     if rccm.get("rccm") and local_rccm and not meme_rccm(local_rccm, rccm["rccm"]):

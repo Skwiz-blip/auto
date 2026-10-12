@@ -138,7 +138,8 @@ select { padding-right: 28px; max-width: 360px; }
 .barre-lib { color: var(--encre-2); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .barre-piste { display: flex; align-items: center; gap: 8px; }
 .barre-rempli { height: 14px; background: var(--bleu); border-radius: 0 4px 4px 0; min-width: 3px; }
-.barre-val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.barre-val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.barre-part { font-weight: 400; color: var(--encre-3); margin-left: 4px; }
 .barres .rien { color: var(--encre-3); margin: 0; }
 
 .bulle {
@@ -275,7 +276,26 @@ tr.groupe span { margin-left: 10px; color: var(--encre-2); font-size: 12.5px; }
 tbody tr.groupe:hover { background: var(--bleu-clair); }
 
 /* ---------- guide d'utilisation ---------- */
-.guide-section { padding: 22px 24px; }
+.guide { display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 24px; align-items: start; }
+.sommaire { position: sticky; top: 20px; }
+.sommaire input { width: 100%; margin-bottom: 10px; }
+.sommaire nav { gap: 1px; }
+.sommaire nav button {
+  border: 0; background: none; text-align: left; padding: 7px 10px; border-radius: 8px;
+  cursor: pointer; color: var(--encre-2);
+}
+.sommaire nav button:hover { background: var(--surface); color: var(--encre); }
+.sommaire nav button.actif { background: var(--bleu-clair); color: var(--bleu-fonce); font-weight: 600; }
+.sommaire nav button:focus-visible, .guide-section .btn:focus-visible { outline: 2px solid var(--bleu); outline-offset: 1px; }
+#guide-aucun { padding: 36px 20px; margin-bottom: 16px; color: var(--encre-2); }
+@media (max-width: 1240px) {
+  .guide { grid-template-columns: 1fr; gap: 14px; }
+  .sommaire { position: static; }
+  .sommaire input { max-width: 320px; }
+  .sommaire nav { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .sommaire nav button { border: 1px solid var(--bord); border-radius: 999px; padding: 5px 12px; }
+}
+.guide-section { scroll-margin-top: 16px; padding: 22px 24px; }
 .guide-section h2 { font-size: 18px; margin-bottom: 12px; }
 .guide-section h3 { font-size: 14px; font-weight: 600; margin: 20px 0 8px; }
 .guide-section p, .guide-section ul, .guide-section ol { margin: 0 0 10px; color: var(--encre-2); max-width: 76ch; }

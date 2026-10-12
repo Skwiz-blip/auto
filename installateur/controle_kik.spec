@@ -1,4 +1,4 @@
-# Recette PyInstaller : « Controle KIK.exe » et tout ce qu'il lui faut (lancée par construire.bat).
+# Recette PyInstaller : « KYM.exe » et tout ce qu'il lui faut (lancée par construire.bat).
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 
@@ -28,6 +28,6 @@ a = Analysis(
     excludes=["tkinter", "matplotlib", "IPython", "pytest"],
 )
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Controle KIK",
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="KYM",
           console=False, upx=False)
-coll = COLLECT(exe, a.binaries, a.datas, upx=False, name="Controle KIK")
+coll = COLLECT(exe, a.binaries, a.datas, upx=False, name="KYM")
